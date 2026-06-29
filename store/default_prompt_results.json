@@ -1,0 +1,247 @@
+{
+  "llminput": {
+    "top_k": 3,
+    "target_user_id": "user_001",
+    "generated_at": "2026-06-27T12:00:00Z",
+    "allowed_actions": "view, click, add_to_cart, purchase, like, dislike, rate, share, remove",
+    "action_weights": "| Action | Weight | Meaning |\n|--------|--------|----------|\n| purchase | 1.0 | Strong positive signal |\n| add_to_cart | 0.85 | High intent |\n| like | 0.75 | Explicit preference |\n| rate | 0.70 | Use rating value |\n| click | 0.50 | Interest signal |\n| view | 0.30 | Weak signal |\n| share | 0.65 | Social endorsement |\n| dislike | -1.0 | Hard negative |\n| remove | -0.5 | Negative signal |",
+    "constraints": "- Exclude items already purchased or disliked by the Target User.\n- Prefer items in categories the user engaged with recently.\n- Balance exploitation with one exploratory item.",
+    "target_user_profile": {
+      "user_id": "user_001",
+      "display_name": "Alex",
+      "segment": "returning_customer",
+      "preferences": {
+        "categories": [
+          "electronics",
+          "books"
+        ],
+        "price_range": {
+          "min": 10,
+          "max": 100,
+          "currency": "USD"
+        }
+      },
+      "notes": "Interested in tech gadgets and sci-fi books."
+    },
+    "target_user_interactions": [
+      {
+        "timestamp": "2026-06-01T10:15:00Z",
+        "item_id": "item_001",
+        "action": "view"
+      },
+      {
+        "timestamp": "2026-06-01T10:16:30Z",
+        "item_id": "item_001",
+        "action": "click"
+      },
+      {
+        "timestamp": "2026-06-03T09:05:00Z",
+        "item_id": "item_001",
+        "action": "purchase"
+      },
+      {
+        "timestamp": "2026-06-10T18:40:00Z",
+        "item_id": "item_002",
+        "action": "view"
+      },
+      {
+        "timestamp": "2026-06-10T18:41:00Z",
+        "item_id": "item_002",
+        "action": "like"
+      }
+    ],
+    "other_users_interactions": [
+      {
+        "user_id": "user_002",
+        "interactions": [
+          {
+            "timestamp": "2026-06-05T08:00:00Z",
+            "item_id": "item_001",
+            "action": "purchase"
+          },
+          {
+            "timestamp": "2026-06-06T12:00:00Z",
+            "item_id": "item_004",
+            "action": "purchase"
+          }
+        ]
+      },
+      {
+        "user_id": "user_003",
+        "interactions": [
+          {
+            "timestamp": "2026-06-08T10:30:00Z",
+            "item_id": "item_002",
+            "action": "purchase"
+          },
+          {
+            "timestamp": "2026-06-11T09:20:00Z",
+            "item_id": "item_003",
+            "action": "purchase"
+          }
+        ]
+      }
+    ],
+    "item_catalog": [
+      {
+        "item_id": "item_001",
+        "title": "Wireless Bluetooth Earbuds",
+        "category": "electronics",
+        "tags": [
+          "wireless",
+          "audio",
+          "budget"
+        ],
+        "price": 29.99,
+        "description": "Compact earbuds with noise isolation and 24-hour battery case."
+      },
+      {
+        "item_id": "item_002",
+        "title": "The Martian",
+        "category": "books",
+        "tags": [
+          "fiction",
+          "sci-fi",
+          "bestseller"
+        ],
+        "price": 14.99,
+        "description": "A stranded astronaut fights to survive on Mars."
+      },
+      {
+        "item_id": "item_003",
+        "title": "Python for Data Analysis",
+        "category": "books",
+        "tags": [
+          "non-fiction",
+          "programming",
+          "data"
+        ],
+        "price": 39.99,
+        "description": "Practical guide to pandas, NumPy, and data workflows."
+      },
+      {
+        "item_id": "item_004",
+        "title": "Mechanical Keyboard",
+        "category": "electronics",
+        "tags": [
+          "gaming",
+          "peripherals",
+          "mechanical"
+        ],
+        "price": 89.99,
+        "description": "Hot-swappable switches with RGB backlighting."
+      },
+      {
+        "item_id": "item_005",
+        "title": "Travel Guide: Amsterdam",
+        "category": "travel",
+        "tags": [
+          "europe",
+          "city-guide",
+          "canals"
+        ],
+        "price": 19.99,
+        "description": "Neighborhoods, museums, and day trips around Amsterdam."
+      }
+    ]
+  },
+  "item_catalog": [
+    {
+      "item_id": "item_001",
+      "title": "Wireless Bluetooth Earbuds",
+      "category": "electronics",
+      "tags": [
+        "wireless",
+        "audio",
+        "budget"
+      ],
+      "price": 29.99,
+      "description": "Compact earbuds with noise isolation and 24-hour battery case."
+    },
+    {
+      "item_id": "item_002",
+      "title": "The Martian",
+      "category": "books",
+      "tags": [
+        "fiction",
+        "sci-fi",
+        "bestseller"
+      ],
+      "price": 14.99,
+      "description": "A stranded astronaut fights to survive on Mars."
+    },
+    {
+      "item_id": "item_003",
+      "title": "Python for Data Analysis",
+      "category": "books",
+      "tags": [
+        "non-fiction",
+        "programming",
+        "data"
+      ],
+      "price": 39.99,
+      "description": "Practical guide to pandas, NumPy, and data workflows."
+    },
+    {
+      "item_id": "item_004",
+      "title": "Mechanical Keyboard",
+      "category": "electronics",
+      "tags": [
+        "gaming",
+        "peripherals",
+        "mechanical"
+      ],
+      "price": 89.99,
+      "description": "Hot-swappable switches with RGB backlighting."
+    },
+    {
+      "item_id": "item_005",
+      "title": "Travel Guide: Amsterdam",
+      "category": "travel",
+      "tags": [
+        "europe",
+        "city-guide",
+        "canals"
+      ],
+      "price": 19.99,
+      "description": "Neighborhoods, museums, and day trips around Amsterdam."
+    }
+  ],
+  "item_embeddings": {
+    "model": "BAAI/bge-small-en-v1.5",
+    "dimension": 384,
+    "num_items": 5,
+    "vectors_file": "store/embeddings/item_vectors.npy",
+    "faiss_index_file": "store/embeddings/item_faiss.index",
+    "records_file": "store/embeddings/item_records.json"
+  },
+  "user_embeddings": {
+    "model": "BAAI/bge-small-en-v1.5",
+    "dimension": 384,
+    "num_users": 3,
+    "vectors_file": "store/embeddings/user_vectors.npy",
+    "faiss_index_file": "store/embeddings/user_faiss.index",
+    "records_file": "store/embeddings/user_records.json"
+  },
+  "default_prompt_embeddings": {
+    "model": "BAAI/bge-small-en-v1.5",
+    "dimension": 384,
+    "num_records": 12,
+    "vectors_file": "store/embeddings/default/default_prompt_vectors.npy",
+    "faiss_index_file": "store/embeddings/default/default_prompt_faiss.index",
+    "records_file": "store/embeddings/default/default_prompt_records.json",
+    "placeholders": [
+      "action_weights",
+      "allowed_actions",
+      "target_user_profile",
+      "target_user_interactions",
+      "other_users_interactions",
+      "constraints",
+      "top_k",
+      "target_user_id",
+      "generated_at",
+      "item_catalog"
+    ]
+  },
+  "rendered_prompt": "# LLM Recommender System — Prompt Template\n\n> Send this document to the LLM after filling all `{placeholder}` values via llminput. The model returns personalized recommendations for the **Target User**.\n\n---\n\n## 1. Engine Description\n\nYou are a **recommendation engine**. Your job is to suggest items the **Target User** is most likely to engage with next.\n\n### Goals\n- Maximize relevance to the Target User's tastes and intent.\n- Use recency, frequency, and action strength (e.g. purchase > view).\n- Learn from **similar users** without overfitting to popularity alone.\n- Prefer diverse, non-redundant recommendations when scores are close.\n- Never recommend items the Target User has already **purchased** or **explicitly disliked**, unless asked.\n\n### Action weights (stronger = higher intent)\n\n| Action | Weight | Meaning |\n|--------|--------|----------|\n| purchase | 1.0 | Strong positive signal |\n| add_to_cart | 0.85 | High intent |\n| like | 0.75 | Explicit preference |\n| rate | 0.70 | Use rating value |\n| click | 0.50 | Interest signal |\n| view | 0.30 | Weak signal |\n| share | 0.65 | Social endorsement |\n| dislike | -1.0 | Hard negative |\n| remove | -0.5 | Negative signal |\n\n### Rules\n1. Weight **recent** interactions more than older ones.\n2. Treat repeated actions on the same item as stronger preference.\n3. Use **Other Users** to find collaborative patterns (users who liked similar items).\n4. If data is sparse, rely more on item metadata and popular items in the same category.\n5. Return exactly **3** recommendations unless stated otherwise.\n6. For each recommendation, give a **short, human-readable reason** tied to specific interactions or similar users.\n\n---\n\n## 2. Item Catalog\n\n```json\n[\n  {\n    \"item_id\": \"item_001\",\n    \"title\": \"Wireless Bluetooth Earbuds\",\n    \"category\": \"electronics\",\n    \"tags\": [\n      \"wireless\",\n      \"audio\",\n      \"budget\"\n    ],\n    \"price\": 29.99,\n    \"description\": \"Compact earbuds with noise isolation and 24-hour battery case.\"\n  },\n  {\n    \"item_id\": \"item_002\",\n    \"title\": \"The Martian\",\n    \"category\": \"books\",\n    \"tags\": [\n      \"fiction\",\n      \"sci-fi\",\n      \"bestseller\"\n    ],\n    \"price\": 14.99,\n    \"description\": \"A stranded astronaut fights to survive on Mars.\"\n  },\n  {\n    \"item_id\": \"item_003\",\n    \"title\": \"Python for Data Analysis\",\n    \"category\": \"books\",\n    \"tags\": [\n      \"non-fiction\",\n      \"programming\",\n      \"data\"\n    ],\n    \"price\": 39.99,\n    \"description\": \"Practical guide to pandas, NumPy, and data workflows.\"\n  },\n  {\n    \"item_id\": \"item_004\",\n    \"title\": \"Mechanical Keyboard\",\n    \"category\": \"electronics\",\n    \"tags\": [\n      \"gaming\",\n      \"peripherals\",\n      \"mechanical\"\n    ],\n    \"price\": 89.99,\n    \"description\": \"Hot-swappable switches with RGB backlighting.\"\n  },\n  {\n    \"item_id\": \"item_005\",\n    \"title\": \"Travel Guide: Amsterdam\",\n    \"category\": \"travel\",\n    \"tags\": [\n      \"europe\",\n      \"city-guide\",\n      \"canals\"\n    ],\n    \"price\": 19.99,\n    \"description\": \"Neighborhoods, museums, and day trips around Amsterdam.\"\n  }\n]\n```\n\n**Item schema (each element):**\n\n```json\n{\n  \"item_id\": \"{item_id}\",\n  \"title\": \"{title}\",\n  \"category\": \"{category}\",\n  \"tags\": [\"{tag}\"],\n  \"price\": {price},\n  \"description\": \"{description}\"\n}\n```\n\n---\n\n## 3. Target User Profile\n\n```json\n{\n  \"user_id\": \"user_001\",\n  \"display_name\": \"Alex\",\n  \"segment\": \"returning_customer\",\n  \"preferences\": {\n    \"categories\": [\n      \"electronics\",\n      \"books\"\n    ],\n    \"price_range\": {\n      \"min\": 10,\n      \"max\": 100,\n      \"currency\": \"USD\"\n    }\n  },\n  \"notes\": \"Interested in tech gadgets and sci-fi books.\"\n}\n```\n\n**Profile schema:**\n\n```json\n{\n  \"user_id\": \"{user_id}\",\n  \"display_name\": \"{display_name}\",\n  \"segment\": \"{segment}\",\n  \"preferences\": {\n    \"categories\": [\"{category}\"],\n    \"price_range\": {\n      \"min\": {price_min},\n      \"max\": {price_max},\n      \"currency\": \"{currency}\"\n    }\n  },\n  \"notes\": \"{notes}\"\n}\n```\n\n---\n\n## 4. Target User — Item Interactions\n\nChronological list of what **this user** did, **when**, and on **which item**.\n\n```json\n[\n  {\n    \"timestamp\": \"2026-06-01T10:15:00Z\",\n    \"item_id\": \"item_001\",\n    \"action\": \"view\"\n  },\n  {\n    \"timestamp\": \"2026-06-01T10:16:30Z\",\n    \"item_id\": \"item_001\",\n    \"action\": \"click\"\n  },\n  {\n    \"timestamp\": \"2026-06-03T09:05:00Z\",\n    \"item_id\": \"item_001\",\n    \"action\": \"purchase\"\n  },\n  {\n    \"timestamp\": \"2026-06-10T18:40:00Z\",\n    \"item_id\": \"item_002\",\n    \"action\": \"view\"\n  },\n  {\n    \"timestamp\": \"2026-06-10T18:41:00Z\",\n    \"item_id\": \"item_002\",\n    \"action\": \"like\"\n  }\n]\n```\n\n**Interaction schema (each element):**\n\n```json\n{\n  \"timestamp\": \"{timestamp}\",\n  \"item_id\": \"{item_id}\",\n  \"action\": \"{action}\",\n  \"value\": {value},\n  \"session_id\": \"{session_id}\",\n  \"context\": \"{context}\"\n}\n```\n\n**Allowed `action` values:** `view, click, add_to_cart, purchase, like, dislike, rate, share, remove`\n\n**Optional fields:** `value`, `session_id`, `context` — omit when not applicable.\n\n---\n\n## 5. Other Users — Item Interactions\n\nInteractions from **other users**. Used for collaborative filtering and “users like you also liked …” reasoning.\n\n```json\n[\n  {\n    \"user_id\": \"user_002\",\n    \"interactions\": [\n      {\n        \"timestamp\": \"2026-06-05T08:00:00Z\",\n        \"item_id\": \"item_001\",\n        \"action\": \"purchase\"\n      },\n      {\n        \"timestamp\": \"2026-06-06T12:00:00Z\",\n        \"item_id\": \"item_004\",\n        \"action\": \"purchase\"\n      }\n    ]\n  },\n  {\n    \"user_id\": \"user_003\",\n    \"interactions\": [\n      {\n        \"timestamp\": \"2026-06-08T10:30:00Z\",\n        \"item_id\": \"item_002\",\n        \"action\": \"purchase\"\n      },\n      {\n        \"timestamp\": \"2026-06-11T09:20:00Z\",\n        \"item_id\": \"item_003\",\n        \"action\": \"purchase\"\n      }\n    ]\n  }\n]\n```\n\n**Other-user schema (each element):**\n\n```json\n{\n  \"user_id\": \"{user_id}\",\n  \"interactions\": [\n    {\n      \"timestamp\": \"{timestamp}\",\n      \"item_id\": \"{item_id}\",\n      \"action\": \"{action}\",\n      \"value\": {value},\n      \"session_id\": \"{session_id}\",\n      \"context\": \"{context}\"\n    }\n  ]\n}\n```\n\n---\n\n## 6. Request\n\nBased on:\n- the **Engine Description** (Section 1),\n- the **Item Catalog** (Section 2),\n- the **Target User Profile** (Section 3),\n- the **Target User interactions** (Section 4),\n- and **Other Users' interactions** (Section 5),\n\ngenerate **3** personalized recommendations for user **`user_001`**.\n\n**Constraints:**\n\n- Exclude items already purchased or disliked by the Target User.\n- Prefer items in categories the user engaged with recently.\n- Balance exploitation with one exploratory item.\n\n---\n\n## 7. Expected LLM Response Format\n\nThe model **must** respond with valid JSON only (no markdown wrapper):\n\n```json\n{\n  \"target_user_id\": \"user_001\",\n  \"generated_at\": \"2026-06-27T12:00:00Z\",\n  \"recommendations\": [\n    {\n      \"rank\": {rank},\n      \"item_id\": \"{item_id}\",\n      \"score\": {score},\n      \"reason\": \"{reason}\"\n    }\n  ],\n  \"summary\": \"{summary}\"\n}\n```\n\n### Response field definitions\n\n| Field | Type | Description |\n|-------|------|-------------|\n| `target_user_id` | string | Must match `user_001` from Section 3 |\n| `generated_at` | ISO 8601 | `2026-06-27T12:00:00Z` — when recommendations were produced |\n| `recommendations` | array | Ordered list, best first; length = `3` |\n| `recommendations[].rank` | integer | `{rank}` — 1 = top recommendation |\n| `recommendations[].item_id` | string | `{item_id}` from catalog or interaction data |\n| `recommendations[].score` | float | `{score}` — 0.0–1.0 confidence / relevance |\n| `recommendations[].reason` | string | `{reason}` — brief justification citing user or peer behavior |\n| `summary` | string | `{summary}` — high-level explanation for the Target User or downstream UI |\n\n---\n\n## 8. llminput — Placeholder Reference\n\nAll values below are injected at runtime. Replace every `{key}` in this document.\n\n| Placeholder | Type | Description |\n|-------------|------|-------------|\n| `3` | integer | Number of recommendations to return |\n| `user_001` | string | User ID to recommend for |\n| `2026-06-27T12:00:00Z` | ISO 8601 | Timestamp for the response (optional pre-fill) |\n| `| Action | Weight | Meaning |\n|--------|--------|----------|\n| purchase | 1.0 | Strong positive signal |\n| add_to_cart | 0.85 | High intent |\n| like | 0.75 | Explicit preference |\n| rate | 0.70 | Use rating value |\n| click | 0.50 | Interest signal |\n| view | 0.30 | Weak signal |\n| share | 0.65 | Social endorsement |\n| dislike | -1.0 | Hard negative |\n| remove | -0.5 | Negative signal |` | markdown table or JSON | Action → weight mapping |\n| `[\n  {\n    \"item_id\": \"item_001\",\n    \"title\": \"Wireless Bluetooth Earbuds\",\n    \"category\": \"electronics\",\n    \"tags\": [\n      \"wireless\",\n      \"audio\",\n      \"budget\"\n    ],\n    \"price\": 29.99,\n    \"description\": \"Compact earbuds with noise isolation and 24-hour battery case.\"\n  },\n  {\n    \"item_id\": \"item_002\",\n    \"title\": \"The Martian\",\n    \"category\": \"books\",\n    \"tags\": [\n      \"fiction\",\n      \"sci-fi\",\n      \"bestseller\"\n    ],\n    \"price\": 14.99,\n    \"description\": \"A stranded astronaut fights to survive on Mars.\"\n  },\n  {\n    \"item_id\": \"item_003\",\n    \"title\": \"Python for Data Analysis\",\n    \"category\": \"books\",\n    \"tags\": [\n      \"non-fiction\",\n      \"programming\",\n      \"data\"\n    ],\n    \"price\": 39.99,\n    \"description\": \"Practical guide to pandas, NumPy, and data workflows.\"\n  },\n  {\n    \"item_id\": \"item_004\",\n    \"title\": \"Mechanical Keyboard\",\n    \"category\": \"electronics\",\n    \"tags\": [\n      \"gaming\",\n      \"peripherals\",\n      \"mechanical\"\n    ],\n    \"price\": 89.99,\n    \"description\": \"Hot-swappable switches with RGB backlighting.\"\n  },\n  {\n    \"item_id\": \"item_005\",\n    \"title\": \"Travel Guide: Amsterdam\",\n    \"category\": \"travel\",\n    \"tags\": [\n      \"europe\",\n      \"city-guide\",\n      \"canals\"\n    ],\n    \"price\": 19.99,\n    \"description\": \"Neighborhoods, museums, and day trips around Amsterdam.\"\n  }\n]` | JSON array | Full item catalog (Section 2) |\n| `{\n  \"user_id\": \"user_001\",\n  \"display_name\": \"Alex\",\n  \"segment\": \"returning_customer\",\n  \"preferences\": {\n    \"categories\": [\n      \"electronics\",\n      \"books\"\n    ],\n    \"price_range\": {\n      \"min\": 10,\n      \"max\": 100,\n      \"currency\": \"USD\"\n    }\n  },\n  \"notes\": \"Interested in tech gadgets and sci-fi books.\"\n}` | JSON object | Target user profile (Section 3) |\n| `[\n  {\n    \"timestamp\": \"2026-06-01T10:15:00Z\",\n    \"item_id\": \"item_001\",\n    \"action\": \"view\"\n  },\n  {\n    \"timestamp\": \"2026-06-01T10:16:30Z\",\n    \"item_id\": \"item_001\",\n    \"action\": \"click\"\n  },\n  {\n    \"timestamp\": \"2026-06-03T09:05:00Z\",\n    \"item_id\": \"item_001\",\n    \"action\": \"purchase\"\n  },\n  {\n    \"timestamp\": \"2026-06-10T18:40:00Z\",\n    \"item_id\": \"item_002\",\n    \"action\": \"view\"\n  },\n  {\n    \"timestamp\": \"2026-06-10T18:41:00Z\",\n    \"item_id\": \"item_002\",\n    \"action\": \"like\"\n  }\n]` | JSON array | Target user event history (Section 4) |\n| `[\n  {\n    \"user_id\": \"user_002\",\n    \"interactions\": [\n      {\n        \"timestamp\": \"2026-06-05T08:00:00Z\",\n        \"item_id\": \"item_001\",\n        \"action\": \"purchase\"\n      },\n      {\n        \"timestamp\": \"2026-06-06T12:00:00Z\",\n        \"item_id\": \"item_004\",\n        \"action\": \"purchase\"\n      }\n    ]\n  },\n  {\n    \"user_id\": \"user_003\",\n    \"interactions\": [\n      {\n        \"timestamp\": \"2026-06-08T10:30:00Z\",\n        \"item_id\": \"item_002\",\n        \"action\": \"purchase\"\n      },\n      {\n        \"timestamp\": \"2026-06-11T09:20:00Z\",\n        \"item_id\": \"item_003\",\n        \"action\": \"purchase\"\n      }\n    ]\n  }\n]` | JSON array | Peer user event histories (Section 5) |\n| `- Exclude items already purchased or disliked by the Target User.\n- Prefer items in categories the user engaged with recently.\n- Balance exploitation with one exploratory item.` | markdown list | Recommendation constraints (Section 6) |\n| `view, click, add_to_cart, purchase, like, dislike, rate, share, remove` | comma-separated string | Valid action enum values |\n\n**Per-record fields (used when building JSON arrays):**\n\n| Placeholder | Type | Description |\n|-------------|------|-------------|\n| `{item_id}` | string | Item identifier |\n| `{title}` | string | Item title |\n| `{category}` | string | Item or preference category |\n| `{tag}` | string | Item tag (repeat in array as needed) |\n| `{price}` | number | Item price |\n| `{description}` | string | Item description |\n| `{user_id}` | string | User identifier |\n| `{display_name}` | string | User display name |\n| `{segment}` | string | User segment / cohort |\n| `{price_min}` | number | Min preferred price |\n| `{price_max}` | number | Max preferred price |\n| `{currency}` | string | Currency code (e.g. USD) |\n| `{notes}` | string | Free-text user context |\n| `{timestamp}` | ISO 8601 | Event time |\n| `{action}` | string | Interaction type |\n| `{value}` | number | Rating or custom score (omit if N/A) |\n| `{session_id}` | string | Session grouping ID |\n| `{context}` | string | Event source (search, homepage, etc.) |\n| `{rank}` | integer | Recommendation rank |\n| `{score}` | float | Recommendation score 0.0–1.0 |\n| `{reason}` | string | Why this item was recommended |\n| `{summary}` | string | Overall recommendation strategy sentence |\n\n**Your answer:** Recommendations for **`user_001`** as defined in Section 7.\n"
+}

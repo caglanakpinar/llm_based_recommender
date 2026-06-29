@@ -1,0 +1,42 @@
+[
+  {
+    "item_id": "item_001",
+    "title": "Wireless Bluetooth Earbuds",
+    "category": "electronics",
+    "tags": ["wireless", "audio", "budget"],
+    "price": 29.99,
+    "description": "Compact earbuds with noise isolation and 24-hour battery case."
+  },
+  {
+    "item_id": "item_002",
+    "title": "The Martian",
+    "category": "books",
+    "tags": ["fiction", "sci-fi", "bestseller"],
+    "price": 14.99,
+    "description": "A stranded astronaut fights to survive on Mars."
+  },
+  {
+    "item_id": "item_003",
+    "title": "Python for Data Analysis",
+    "category": "books",
+    "tags": ["non-fiction", "programming", "data"],
+    "price": 39.99,
+    "description": "Practical guide to pandas, NumPy, and data workflows."
+  },
+  {
+    "item_id": "item_004",
+    "title": "Mechanical Keyboard",
+    "category": "electronics",
+    "tags": ["gaming", "peripherals", "mechanical"],
+    "price": 89.99,
+    "description": "Hot-swappable switches with RGB backlighting."
+  },
+  {
+    "item_id": "item_005",
+    "title": "Travel Guide: Amsterdam",
+    "category": "travel",
+    "tags": ["europe", "city-guide", "canals"],
+    "price": 19.99,
+    "description": "Neighborhoods, museums, and day trips around Amsterdam."
+  }
+]

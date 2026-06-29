@@ -1,0 +1,20 @@
+{
+  "override_keys": [
+    "constraints",
+    "generated_at",
+    "llm_chat",
+    "other_users_interactions",
+    "target_user_interactions",
+    "top_k",
+    "user_profile"
+  ],
+  "generated_count": 8,
+  "default_count": 4,
+  "user_generated_count": 4,
+  "user_default_count": 0,
+  "vectors_file": "test_reco_engine/embeddings/session/prompt_vectors.npy",
+  "records_file": "test_reco_engine/embeddings/session/prompt_records.json",
+  "rendered_prompt_file": "test_reco_engine/embeddings/session/rendered_prompt.md",
+  "user_vectors_file": "test_reco_engine/embeddings/session/user_vectors.npy",
+  "user_records_file": "test_reco_engine/embeddings/session/user_records.json"
+}

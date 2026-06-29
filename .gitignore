@@ -1,0 +1,9 @@
+.venv/
+.venv311/
+.cache/
+dist/
+*.egg-info/
+store/engines/
+store/uploads/
+__pycache__/
+*.pyc

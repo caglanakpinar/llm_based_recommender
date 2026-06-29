@@ -1,0 +1,217 @@
+reco_engine_name: test
+data_dir: data
+store_dir: store
+engines_dir: store/engines
+prompt_path: recommender_prompt.md
+model_name: BAAI/bge-small-en-v1.5
+embeddings_dir: embeddings
+embeddings_default_dir: embeddings/default
+item_vectors_file: embeddings/item_vectors.npy
+item_faiss_index_file: embeddings/item_faiss.index
+item_records_file: embeddings/item_records.json
+user_vectors_file: embeddings/user_vectors.npy
+user_faiss_index_file: embeddings/user_faiss.index
+user_records_file: embeddings/user_records.json
+default_prompt_vectors_file: embeddings/default/default_prompt_vectors.npy
+default_prompt_faiss_index_file: embeddings/default/default_prompt_faiss.index
+default_prompt_records_file: embeddings/default/default_prompt_records.json
+default_prompt_results_file: default_prompt_results.json
+rendered_prompt_file: rendered_prompt.md
+session_dir: embeddings/session
+llminput_file: llminput.json
+uploads_dir: uploads
+prompt_placeholder_sections:
+  action_weights: 1. Engine Description
+  allowed_actions: 4. Target User — Item Interactions
+  user_profile: 3. User Profile
+  target_user_interactions: 4. Target User — Item Interactions
+  other_users_interactions: 5. Other Users — Item Interactions
+  item_catalog: 2. Item Catalog
+  top_k: 6. Request
+  generated_at: 7. Expected LLM Response Format
+  constraints: 6. Request
+  llm_chat: 9. Additional Instructions
+default_llminput_keys:
+- action_weights
+- allowed_actions
+- user_profile
+- target_user_interactions
+- other_users_interactions
+- constraints
+- top_k
+- generated_at
+- llm_chat
+user_profile_columns:
+  user_id: user_id
+  segment: segment
+  notes: notes
+item_catalog_columns:
+  item_id: item_id
+  title: title
+  category: category
+  tags: tags
+  price: price
+  description: description
+top_k: 3
+constraints: '- Exclude items already purchased or disliked by the Target User.
+
+  - Prefer items in categories the user engaged with recently.
+
+  - Balance exploitation with one exploratory item.'
+parquet_folder: /Users/caglanakpinar/Documents/GitHub/llm_based_recommender/store/uploads/draft/interactions
+interactions_parquet_folder: /Users/caglanakpinar/Documents/GitHub/llm_based_recommender/store/uploads/draft/interactions
+users_parquet_folder: /Users/caglanakpinar/Documents/GitHub/llm_based_recommender/store/uploads/draft/users
+items_parquet_folder: /Users/caglanakpinar/Documents/GitHub/llm_based_recommender/store/uploads/draft/items
+llm_chat: "# LLM-Based Recommendation Engine Generation Prompt\n\nYou are an expert\
+  \ recommendation system engineer. Your task is to **design and generate a personalized\
+  \ recommendation engine** that takes a `user_id` as input and returns the top-K\
+  \ most relevant items for that user.\n\n---\n\n## \U0001F4CA Available Datasets\n\
+  \n### 1. Item Catalog\n**Source:** `data/default_item_catalog.json` (5 items)\n\n\
+  ```json\n[\n  {\n    \"item_id\": \"item_001\",\n    \"title\": \"Wireless Bluetooth\
+  \ Earbuds\",\n    \"category\": \"electronics\",\n    \"tags\": [\"wireless\", \"\
+  audio\", \"budget\"],\n    \"price\": 29.99,\n    \"description\": \"Compact earbuds\
+  \ with noise isolation and 24-hour battery case.\"\n  },\n  {\n    \"item_id\":\
+  \ \"item_002\",\n    \"title\": \"The Martian\",\n    \"category\": \"books\",\n\
+  \    \"tags\": [\"fiction\", \"sci-fi\", \"bestseller\"],\n    \"price\": 14.99,\n\
+  \    \"description\": \"A stranded astronaut fights to survive on Mars.\"\n  },\n\
+  \  {\n    \"item_id\": \"item_003\",\n    \"title\": \"Python for Data Analysis\"\
+  ,\n    \"category\": \"books\",\n    \"tags\": [\"non-fiction\", \"programming\"\
+  , \"data\"],\n    \"price\": 39.99,\n    \"description\": \"Practical guide to pandas,\
+  \ NumPy, and data workflows.\"\n  },\n  {\n    \"item_id\": \"item_004\",\n    \"\
+  title\": \"Mechanical Keyboard\",\n    \"category\": \"electronics\",\n    \"tags\"\
+  : [\"gaming\", \"peripherals\", \"mechanical\"],\n    \"price\": 89.99,\n    \"\
+  description\": \"Hot-swappable switches with RGB backlighting.\"\n  },\n  {\n  \
+  \  \"item_id\": \"item_005\",\n    \"title\": \"Travel Guide: Amsterdam\",\n   \
+  \ \"category\": \"travel\",\n    \"tags\": [\"europe\", \"city-guide\", \"canals\"\
+  ],\n    \"price\": 19.99,\n    \"description\": \"Neighborhoods, museums, and day\
+  \ trips around Amsterdam.\"\n  }\n]\n```\n\n**Item Schema:**\n- `item_id` (string):\
+  \ Unique item identifier\n- `title` (string): Display name\n- `category` (string):\
+  \ Item category (electronics, books, travel, etc.)\n- `tags` (array): Searchable\
+  \ metadata tags\n- `price` (float): Item price\n- `description` (string): Detailed\
+  \ description\n\n---\n\n### 2. User Profile Dataset\n**Source:** `data/default_user_profile.json`\n\
+  \n```json\n{\n  \"user_id\": \"user_001\",\n  \"segment\": \"returning_customer\"\
+  ,\n  \"notes\": \"Interested in tech gadgets and sci-fi books.\"\n}\n```\n\n**User\
+  \ Profile Schema:**\n- `user_id` (string): Unique user identifier\n- `segment` (string):\
+  \ User segment (returning_customer, new_customer, vip, etc.)\n- `notes` (string):\
+  \ Behavioral or preference notes\n\n---\n\n### 3. User Interactions Dataset\n**Source:**\
+  \ `data/default_llminput.json` → `target_user_interactions`\n\n```json\n[\n  { \"\
+  timestamp\": \"2026-06-01T10:15:00Z\", \"item_id\": \"item_001\", \"action\": \"\
+  view\" },\n  { \"timestamp\": \"2026-06-01T10:16:30Z\", \"item_id\": \"item_001\"\
+  , \"action\": \"click\" },\n  { \"timestamp\": \"2026-06-03T09:05:00Z\", \"item_id\"\
+  : \"item_001\", \"action\": \"purchase\" },\n  { \"timestamp\": \"2026-06-10T18:40:00Z\"\
+  , \"item_id\": \"item_002\", \"action\": \"view\" },\n  { \"timestamp\": \"2026-06-10T18:41:00Z\"\
+  , \"item_id\": \"item_002\", \"action\": \"like\" }\n]\n```\n\n**Interaction Schema:**\n\
+  - `timestamp` (ISO8601): When the interaction occurred\n- `item_id` (string): Which\
+  \ item\n- `action` (string): Type of interaction (view, click, add_to_cart, purchase,\
+  \ like, dislike, rate, share, remove)\n- `value` (optional): Rating or quantitative\
+  \ value\n- `session_id` (optional): Session identifier\n- `context` (optional):\
+  \ Additional context\n\n---\n\n### 4. Peer Users & Collaborative Filtering Data\n\
+  **Source:** `data/default_llminput.json` → `other_users_interactions`\n\n```json\n\
+  [\n  {\n    \"user_id\": \"user_002\",\n    \"segment\": \"new_customer\",\n   \
+  \ \"notes\": \"Browsing electronics and gaming gear.\",\n    \"interactions\": [\n\
+  \      { \"timestamp\": \"2026-06-05T08:00:00Z\", \"item_id\": \"item_001\", \"\
+  action\": \"purchase\" },\n      { \"timestamp\": \"2026-06-06T12:00:00Z\", \"item_id\"\
+  : \"item_004\", \"action\": \"purchase\" }\n    ]\n  },\n  {\n    \"user_id\": \"\
+  user_003\",\n    \"segment\": \"returning_customer\",\n    \"notes\": \"Prefers\
+  \ books and programming content.\",\n    \"interactions\": [\n      { \"timestamp\"\
+  : \"2026-06-08T10:30:00Z\", \"item_id\": \"item_002\", \"action\": \"purchase\"\
+  \ },\n      { \"timestamp\": \"2026-06-11T09:20:00Z\", \"item_id\": \"item_003\"\
+  , \"action\": \"purchase\" }\n    ]\n  }\n]\n```\n\n**Purpose:** Identify patterns\
+  \ from similar users (collaborative filtering).\n\n---\n\n## \U0001F3AF Recommendation\
+  \ Engine Requirements\n\n### Input\n```python\n{\n  \"user_id\": \"user_001\",\n\
+  \  \"top_k\": 3,\n  \"exclude_categories\": [],  # optional\n  \"min_price\": 0,\
+  \            # optional\n  \"max_price\": 100,          # optional\n  \"diversify\"\
+  : True          # optional: return diverse item categories\n}\n```\n\n### Output\n\
+  ```json\n{\n  \"user_id\": \"user_001\",\n  \"recommendations\": [\n    {\n    \
+  \  \"rank\": 1,\n      \"item_id\": \"item_003\",\n      \"title\": \"Python for\
+  \ Data Analysis\",\n      \"category\": \"books\",\n      \"score\": 0.92,\n   \
+  \   \"reason\": \"User_003 (similar segment: returning_customer) purchased this\
+  \ after buying The Martian. Aligns with your interest in tech and data.\",\n   \
+  \   \"signals\": [\n        \"collaborative_filtering: user_003 purchased\",\n \
+  \       \"category_affinity: books (80% of likes)\",\n        \"recency_bonus: recent\
+  \ peer purchase\"\n      ]\n    },\n    {\n      \"rank\": 2,\n      \"item_id\"\
+  : \"item_004\",\n      \"title\": \"Mechanical Keyboard\",\n      \"category\":\
+  \ \"electronics\",\n      \"score\": 0.78,\n      \"reason\": \"High-interest electronics\
+  \ for tech enthusiasts. Complements your wireless earbuds purchase.\",\n      \"\
+  signals\": [\n        \"category_preference: electronics\",\n        \"complementary_purchase:\
+  \ pairs with item_001\",\n        \"peer_adoption: user_002 purchased\"\n      ]\n\
+  \    },\n    {\n      \"rank\": 3,\n      \"item_id\": \"item_005\",\n      \"title\"\
+  : \"Travel Guide: Amsterdam\",\n      \"category\": \"travel\",\n      \"score\"\
+  : 0.65,\n      \"reason\": \"Exploratory recommendation: new category. Popular with\
+  \ returning customers; may appeal beyond tech.\",\n      \"signals\": [\n      \
+  \  \"exploration_bonus: new category\",\n        \"segment_match: returning_customer\
+  \ segment\"\n      ]\n    }\n  ],\n  \"excluded_items\": [\"item_001\", \"item_002\"\
+  ],\n  \"excluded_reason\": \"Already purchased or liked\",\n  \"generated_at\":\
+  \ \"2026-06-29T12:00:00Z\"\n}\n```\n\n---\n\n## ⚖️ Action Weights (Scoring Signals)\n\
+  \nUse these weights to score user-item interactions:\n\n| Action | Weight | Meaning\
+  \ |\n|--------|--------|---------|\n| **purchase** | 1.0 | Strong positive signal\
+  \ — highest intent |\n| **add_to_cart** | 0.85 | High intent to buy |\n| **like**\
+  \ | 0.75 | Explicit positive preference |\n| **rate** | 0.70 | Use rating value\
+  \ (1-5 stars) |\n| **share** | 0.65 | Social endorsement |\n| **click** | 0.50 |\
+  \ Interest signal |\n| **view** | 0.30 | Weak signal — just browsing |\n| **remove**\
+  \ | -0.5 | Negative signal — removed from cart |\n| **dislike** | -1.0 | Hard negative\
+  \ — exclude from recommendations |\n\n---\n\n## \U0001F4C8 Scoring Algorithm (Content\
+  \ + Collaborative Filtering)\n\n### Step 1: Content-Based Scoring\nFor each candidate\
+  \ item, calculate relevance based on user's history:\n\n```\ncontent_score(item,\
+  \ user) = \n    category_affinity(item.category, user) * 0.4 +\n    tag_similarity(item.tags,\
+  \ user.preferences) * 0.3 +\n    price_fit(item.price, user.budget) * 0.2 +\n  \
+  \  recency_bonus(user.interactions) * 0.1\n```\n\n**Category Affinity:** What %\
+  \ of user's actions are in this category?\n**Tag Similarity:** How much do item\
+  \ tags overlap with user's preferred tags?\n**Price Fit:** How does price compare\
+  \ to user's historical purchases?\n**Recency Bonus:** Recent interactions weighted\
+  \ higher than old ones.\n\n### Step 2: Collaborative Filtering Scoring\nFind similar\
+  \ users and boost score if they purchased/liked this item:\n\n```\ncollab_score(item,\
+  \ user) =\n    sum(\n        similarity(user, peer_user) * \n        peer_user.action_weight(item)\
+  \ \n        for peer_user in similar_users\n    ) / num_similar_users\n```\n\n**Similarity\
+  \ Metric:** Users are similar if they:\n- Share the same segment\n- Have purchased\
+  \ from the same categories\n- Have rated items in common\n\n### Step 3: Final Score\n\
+  ```\nfinal_score(item, user) = \n    (content_score * 0.6) + (collab_score * 0.4)\n\
+  ```\n\n---\n\n## \U0001F6AB Exclusion Rules\n\n**Never recommend items where:**\n\
+  1. User has already **purchased** the item\n2. User has **disliked** or **removed**\
+  \ the item\n3. Item is out of stock (if available data)\n4. Item price exceeds user's\
+  \ max_price threshold\n5. Item category is in exclude_categories list\n\n**For user_001\
+  \ example:**\n- ❌ Exclude `item_001` (purchased)\n- ❌ Exclude `item_002` (liked,\
+  \ but check if already purchased)\n- ✅ Recommend from: item_003, item_004, item_005\n\
+  \n---\n\n## \U0001F3A8 Diversity & Exploration Strategy\n\n**Exploitation vs. Exploration\
+  \ (80/20 rule):**\n- **80%** of recommendations: High-confidence matches (score\
+  \ > 0.7)\n- **20%** of recommendations: Exploration — new categories or lower-confidence\
+  \ items\n\n**For top_k=3:**\n- Rank 1: Highest score (exploitation)\n- Rank 2: High\
+  \ score, different category if possible (exploitation)\n- Rank 3: Exploratory item,\
+  \ new category (exploration)\n\n---\n\n## \U0001F50D Case Study: Generating Recommendations\
+  \ for `user_001`\n\n### Given Data:\n- **User:** user_001 (returning_customer, tech\
+  \ gadgets + sci-fi)\n- **History:** Purchased earbuds (electronics), viewed/liked\
+  \ Martian (sci-fi book)\n- **Peers:** user_002 (electronics), user_003 (books +\
+  \ programming)\n- **Catalog:** 5 items across 3 categories\n\n### Algorithm Execution:\n\
+  \n| Item | Category | Content Score | Collab Score | Final Score | Rank | Include?\
+  \ |\n|------|----------|---|---|---|---|---|\n| item_001 | electronics | 0.85 |\
+  \ 0.80 | 0.825 | - | ❌ Purchased |\n| item_002 | books | 0.88 | 0.75 | 0.825 | -\
+  \ | ⚠️ Already liked |\n| item_003 | books | 0.89 | 0.92 | 0.905 | **1** | ✅ **Recommend**\
+  \ |\n| item_004 | electronics | 0.82 | 0.85 | 0.835 | **2** | ✅ **Recommend** |\n\
+  | item_005 | travel | 0.68 | 0.55 | 0.625 | **3** | ✅ **Recommend** (Exploration)\
+  \ |\n\n**Final Recommendations:** item_003 > item_004 > item_005\n\n---\n\n## \U0001F4BB\
+  \ Implementation Checklist\n\nWhen implementing the engine, ensure:\n\n- [ ] **Load\
+  \ & parse** item catalog from JSON\n- [ ] **Retrieve** user profile by `user_id`\n\
+  - [ ] **Fetch** user interactions (timestamp, action, item_id)\n- [ ] **Identify**\
+  \ peer users with similar segments/preferences\n- [ ] **Calculate** content-based\
+  \ scores using category/tag affinity\n- [ ] **Calculate** collaborative filtering\
+  \ scores from peer behavior\n- [ ] **Combine** scores (60% content + 40% collab)\n\
+  - [ ] **Apply** exclusion rules (purchased, disliked, etc.)\n- [ ] **Rank** by final\
+  \ score\n- [ ] **Select** top_k items, ensuring diversity\n- [ ] **Generate** human-readable\
+  \ reason for each recommendation\n- [ ] **Return** structured JSON with scores,\
+  \ signals, and reasoning\n\n---\n\n## \U0001F393 Key Metrics to Track\n\nFor each\
+  \ recommendation, calculate & return:\n1. **Score:** 0.0 to 1.0 (confidence)\n2.\
+  \ **Rank:** Position in top-k list\n3. **Signals:** Which factors contributed (content,\
+  \ collab, diversity, etc.)\n4. **Reason:** Human-readable explanation for user\n\
+  5. **Confidence:** High (>0.8), Medium (0.5-0.8), Low (<0.5)\n\n---\n\n## \U0001F4DD\
+  \ Notes\n\n- **Timestamps matter:** Weight recent interactions more heavily (e.g.,\
+  \ exponential decay over time)\n- **Sparse data:** If user has few interactions,\
+  \ rely more on item popularity and category priors\n- **Cold start:** New users\
+  \ with no history → use segment-based recommendations\n- **Edge cases:** Handle\
+  \ users with no interaction data, items with no peer interest, etc.\n- **Explainability:**\
+  \ Always provide a reason so users understand why items were recommended\n\n---\n\
+  \n**Your recommendation engine should accept `user_id` and return personalized,\
+  \ explainable recommendations using the datasets above.**"
+user_id: user_00001
+num_items: 500
+num_users: 5000
+created_at: '2026-06-29T14:59:28.352750+00:00'
