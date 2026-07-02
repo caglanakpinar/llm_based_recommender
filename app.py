@@ -56,15 +56,35 @@ def _go_generator() -> None:
 
 
 def _call_llm(prompt: str, api_key: str, model: str) -> str:
-    from openai import OpenAI
+    """Call OpenAI when available, otherwise fall back to local/free providers."""
+    def _fallback_call() -> str:
+        from core.llms import FreeLLMCaller
 
-    client = OpenAI(api_key=api_key)
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
-    )
-    return response.choices[0].message.content or ""
+        for provider in ("ollama", "huggingface", "replicate"):
+            try:
+                caller = FreeLLMCaller(api_key=None, model=model, provider=provider)
+                return caller.call(prompt)
+            except Exception:
+                continue
+        raise RuntimeError(
+            "No fallback LLM provider succeeded. Install/start Ollama or configure HF_TOKEN/REPLICATE_API_TOKEN."
+        )
+
+    if api_key is None or api_key.strip() == "":
+        return _fallback_call()
+
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+        )
+        return response.choices[0].message.content or ""
+    except Exception:
+        return _fallback_call()
 
 
 def _column_mapping_inputs(

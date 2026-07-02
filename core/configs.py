@@ -26,6 +26,9 @@ class Configs:
 
     current_dir = Path(os.path.abspath(__file__)).parent.parent
     ENGINE_SUFFIX = "_reco_engine"
+    HF_CACHE_DIR = current_dir / ".cache" / "huggingface"
+    HF_HUB_CACHE_DIR = HF_CACHE_DIR / "hub"
+    HF_TRANSFORMERS_CACHE_DIR = HF_CACHE_DIR / "transformers"
 
     # Repo-level defaults (embedding_store.py lines 27–30).
     DEFAULT_DATA_DIR = "data"
@@ -148,6 +151,18 @@ class Configs:
     @classmethod
     def from_engine_name(cls, engine_name: str) -> Configs:
         return cls(cls.project_name_for(engine_name))
+
+    @classmethod
+    def configure_hf_environment(cls) -> Path:
+        """Create and apply the shared Hugging Face cache directories."""
+        cls.HF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cls.HF_HUB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cls.HF_TRANSFORMERS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        os.environ["HF_HOME"] = str(cls.HF_CACHE_DIR)
+        os.environ["HUGGINGFACE_HUB_CACHE"] = str(cls.HF_HUB_CACHE_DIR)
+        os.environ["TRANSFORMERS_CACHE"] = str(cls.HF_TRANSFORMERS_CACHE_DIR)
+        os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+        return cls.HF_CACHE_DIR
 
     @classmethod
     def project_name_for(cls, engine_name: str) -> str:

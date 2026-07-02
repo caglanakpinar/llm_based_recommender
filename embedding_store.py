@@ -13,18 +13,14 @@ from typing import Any
 
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer
 
 from core.configs import Configs
 
-ROOT = Path(__file__).resolve().parent
-HF_CACHE_DIR = ROOT / ".cache" / "huggingface"
-HF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-os.environ["HF_HOME"] = str(HF_CACHE_DIR)
-os.environ["HUGGINGFACE_HUB_CACHE"] = str(HF_CACHE_DIR / "hub")
-os.environ["TRANSFORMERS_CACHE"] = str(HF_CACHE_DIR / "transformers")
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+ROOT = Configs.current_dir
+Configs.configure_hf_environment()
 
 # Backward-compatible module-level aliases (defaults from Configs).
 DATA_DIR = Configs.current_dir / Configs.DEFAULT_DATA_DIR
@@ -42,7 +38,7 @@ _model: AutoModel | None = None
 def _load_model() -> tuple[AutoTokenizer, AutoModel]:
     global _tokenizer, _model
     if _tokenizer is None or _model is None:
-        cache_dir = str(HF_CACHE_DIR / "models")
+        cache_dir = str(Configs.configure_hf_environment() / "models")
         _tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, cache_dir=cache_dir)
         _model = AutoModel.from_pretrained(MODEL_NAME, cache_dir=cache_dir)
         _model.eval()
@@ -1089,3 +1085,142 @@ if __name__ == "__main__":
         if row["vector_source"] == "generated":
             label = row.get("placeholder") or row.get("record_id")
             print(f"  [generated] {label}")
+
+class EmbeddingModelTrainer(Configs):
+    """Lightweight embedding-model training scaffold for local experiments.
+
+    The class loads a Hugging Face encoder, prepares training examples, and can
+    train a small projection head on top of frozen embeddings when labels are
+    supplied. It also saves the resulting checkpoint and encoded vectors for
+    later reuse.
+    """
+
+    def __init__(
+        self,
+        project_name: str = "default",
+        *,
+        model_name: str | None = None,
+        output_dir: str | Path | None = None,
+        device: str | None = None,
+    ) -> None:
+        super().__init__(project_name)
+        self.model_name = model_name or self.model_name
+        self.output_dir = Path(output_dir or self.engine_root / "model_artifacts")
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.tokenizer, self.model = self._load_model()
+        self.model.to(self.device)
+        self.projection: nn.Module | None = None
+
+    def _load_model(self) -> tuple[AutoTokenizer, AutoModel]:
+        Configs.configure_hf_environment()
+        cache_dir = str(Configs.HF_CACHE_DIR / "models")
+        tokenizer = AutoTokenizer.from_pretrained(self.model_name, cache_dir=cache_dir)
+        model = AutoModel.from_pretrained(self.model_name, cache_dir=cache_dir)
+        model.eval()
+        return tokenizer, model
+
+    def _mean_pool(self, token_embeddings: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        return torch.sum(token_embeddings * input_mask_expanded, dim=1) / torch.clamp(input_mask_expanded.sum(dim=1), min=1e-9)
+
+    def encode(self, texts: str | list[str]) -> np.ndarray:
+        if isinstance(texts, str):
+            texts = [texts]
+        inputs = self.tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+            max_length=512,
+        ).to(self.device)
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+        pooled = self._mean_pool(outputs.last_hidden_state, inputs["attention_mask"])
+        return pooled.cpu().numpy()
+
+    def prepare_training_examples(self, examples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        prepared: list[dict[str, Any]] = []
+        for example in examples:
+            text = example.get("text") or example.get("content") or example.get("input")
+            if not text:
+                continue
+            label = example.get("label")
+            if label is None and example.get("target") is not None:
+                label = example.get("target")
+            prepared.append(
+                {
+                    "text": str(text),
+                    "label": label,
+                    "label_id": example.get("label_id"),
+                }
+            )
+        return prepared
+
+    def train(
+        self,
+        examples: list[dict[str, Any]],
+        *,
+        epochs: int = 1,
+        batch_size: int = 4,
+        learning_rate: float = 2e-5,
+    ) -> dict[str, Any]:
+        prepared = self.prepare_training_examples(examples)
+        if not prepared:
+            return {"status": "skipped", "message": "No training examples were supplied."}
+
+        labels = [item["label_id"] for item in prepared if item.get("label_id") is not None]
+        if not labels and any(item.get("label") is not None for item in prepared):
+            label_values = sorted({str(item["label"]) for item in prepared if item.get("label") is not None})
+            label_map = {value: idx for idx, value in enumerate(label_values)}
+            for item in prepared:
+                if item.get("label") is not None:
+                    item["label_id"] = label_map[str(item["label"])]
+            labels = [item["label_id"] for item in prepared]
+
+        if not labels:
+            vectors = self.encode([item["text"] for item in prepared])
+            output_path = self.output_dir / "embedding_train_vectors.npy"
+            np.save(output_path, vectors)
+            return {
+                "status": "encoded_only",
+                "num_examples": len(prepared),
+                "vectors_path": str(output_path),
+            }
+
+        embedding_dim = self.encode([prepared[0]["text"]]).shape[1]
+        self.projection = nn.Linear(embedding_dim, len(set(labels))).to(self.device)
+        criterion = nn.CrossEntropyLoss()
+        optimizer = torch.optim.AdamW(self.projection.parameters(), lr=learning_rate)
+
+        for _ in range(max(1, int(epochs))):
+            for start in range(0, len(prepared), max(1, int(batch_size))):
+                batch = prepared[start : start + max(1, int(batch_size))]
+                texts = [item["text"] for item in batch]
+                batch_labels = torch.tensor([int(item["label_id"]) for item in batch], dtype=torch.long, device=self.device)
+                with torch.no_grad():
+                    base_embeddings = torch.tensor(self.encode(texts), dtype=torch.float32, device=self.device)
+                logits = self.projection(base_embeddings)
+                loss = criterion(logits, batch_labels)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+        checkpoint_path = self.output_dir / "embedding_trainer_state.pt"
+        torch.save(
+            {
+                "model_name": self.model_name,
+                "projection_state": self.projection.state_dict() if self.projection is not None else None,
+                "label_map": getattr(self, "label_map", None),
+            },
+            checkpoint_path,
+        )
+        return {
+            "status": "trained",
+            "num_examples": len(prepared),
+            "checkpoint_path": str(checkpoint_path),
+            "device": str(self.device),
+            "output_dir": str(self.output_dir),
+        }
+    
+
