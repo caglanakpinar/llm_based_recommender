@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 import streamlit as st
@@ -33,6 +34,9 @@ st.set_page_config(
     layout="wide",
 )
 
+
+HUGGINGFACE_API_TOKEN = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_TOKEN") or ""
+
 # --- session state ---
 if "page" not in st.session_state:
     st.session_state.page = "builder"
@@ -44,6 +48,8 @@ if "last_prompt" not in st.session_state:
     st.session_state.last_prompt = None
 if "last_response" not in st.session_state:
     st.session_state.last_response = None
+if "huggingface_api_key" not in st.session_state:
+    st.session_state.huggingface_api_key = ""
 
 
 def _go_builder(edit_name: str | None = None) -> None:
@@ -55,23 +61,156 @@ def _go_generator() -> None:
     st.session_state.page = "generator"
 
 
-def _call_llm(prompt: str, api_key: str, model: str) -> str:
-    """Call OpenAI when available, otherwise fall back to local/free providers."""
-    def _fallback_call() -> str:
+def _process_rendered_prompt(prompt_text: str) -> str:
+    """Process rendered prompt: skip header, start from Engine Description, limit samples."""
+    lines = prompt_text.split("\n")
+    result_lines = []
+    skip_until_engine = True
+    in_item_catalog = False
+    item_count = 0
+    in_placeholder_ref = False
+
+    for i, line in enumerate(lines):
+        # Skip header and intro until Engine Description
+        if skip_until_engine:
+            if line.startswith("## Engine Description"):
+                skip_until_engine = False
+            else:
+                continue
+
+        # Detect Item Catalog section
+        if line.startswith("## Item Catalog"):
+            in_item_catalog = True
+            item_count = 0
+            result_lines.append(line)
+            continue
+
+        # Detect Placeholder Reference section
+        if line.startswith("## 8. llminput") or line.startswith("## llminput — Placeholder Reference"):
+            in_placeholder_ref = True
+            result_lines.append(line)
+            continue
+
+        # If we hit next section marker, reset flags
+        if line.startswith("## ") and not in_item_catalog and not in_placeholder_ref:
+            result_lines.append(line)
+            in_item_catalog = False
+            in_placeholder_ref = False
+            continue
+        elif line.startswith("## ") and (in_item_catalog or in_placeholder_ref):
+            in_item_catalog = False
+            in_placeholder_ref = False
+            result_lines.append(line)
+            continue
+
+        # In Item Catalog: limit to 1 item
+        if in_item_catalog:
+            if line.strip().startswith("- ") and line.strip().startswith("- {"):
+                item_count += 1
+                if item_count <= 1:
+                    result_lines.append(line)
+                continue
+            elif item_count > 0 and not line.strip():
+                # Keep empty lines within first item
+                if item_count == 1:
+                    result_lines.append(line)
+                continue
+            else:
+                result_lines.append(line)
+
+        # In Placeholder Reference: truncate long lines
+        elif in_placeholder_ref:
+            if len(line) > 100 and (":" in line or "=" in line):
+                # Truncate at 100 chars
+                truncated = line[:100] + "..."
+                result_lines.append(truncated)
+            else:
+                result_lines.append(line)
+        else:
+            result_lines.append(line)
+
+    return "\n".join(result_lines)
+
+
+def _enhance_prompt_with_target_user(prompt: str, target_user_id: str) -> str:
+    """Enhance prompt header to prominently display the target user."""
+    # Find the recommendation intent section and add target user
+    lines = prompt.split("\n")
+    enhanced_lines = []
+    for i, line in enumerate(lines):
+        if "Return personalized recommendations" in line or "Return recommendations" in line:
+            # Insert target user header before this line
+            enhanced_lines.append(f"**🎯 TARGET USER: {target_user_id}**\n")
+        enhanced_lines.append(line)
+    return "\n".join(enhanced_lines)
+
+
+def _format_recommendations_table(parsed_response: dict[str, Any]) -> None:
+    """Display recommendations as a formatted table."""
+    if "recommendations" in parsed_response:
+        recs = parsed_response["recommendations"]
+        if recs:
+            import pandas as pd
+            df_recs = pd.DataFrame(recs)
+            st.dataframe(df_recs, use_container_width=True)
+        else:
+            st.info("No recommendations generated.")
+    else:
+        st.json(parsed_response)
+
+
+def _get_hf_model_for_provider(openai_model: str) -> str:
+    """Map OpenAI model names to HuggingFace compatible models."""
+    model_map = {
+        "gpt-4o-mini": "meta-llama/Llama-2-7b-chat-hf",
+        "gpt-4o": "meta-llama/Llama-2-13b-chat-hf",
+        "gpt-4-turbo": "mistralai/Mistral-7B-Instruct-v0.1",
+        "gpt-3.5-turbo": "mistralai/Mistral-7B-Instruct-v0.1",
+    }
+    return model_map.get(openai_model, "meta-llama/Llama-2-7b-chat-hf")
+
+
+def _call_llm(prompt: str, api_key: str, model: str, hf_api_key: str | None = None, embedding_store=None) -> str:
+    """Call OpenAI when available, otherwise fall back to HuggingFace or local providers with RAG support."""
+    def _fallback_call(hf_token: str) -> str:
         from core.llms import FreeLLMCaller
 
-        for provider in ("ollama", "huggingface", "replicate"):
+        errors = []
+        # Use HuggingFace model mapping for non-OpenAI providers
+        hf_model = _get_hf_model_for_provider(model)
+        
+        for provider in ("huggingface", "ollama", "replicate"):
             try:
-                caller = FreeLLMCaller(api_key=None, model=model, provider=provider)
-                return caller.call(prompt)
-            except Exception:
+                # Use mapped model for HuggingFace, original for others
+                provider_model = hf_model if provider == "huggingface" else model
+                print(f"[DEBUG] Trying {provider} with model {provider_model}...")
+                # Pass embedding_store for RAG pipeline
+                caller = FreeLLMCaller(api_key=hf_token, model=provider_model, provider=provider, embedding_store=embedding_store, top_k=5)
+                result = caller.call(prompt)
+                if result and result.strip():
+                    print(f"[DEBUG] {provider} succeeded!")
+                    return result
+                else:
+                    errors.append(f"{provider}: returned empty response")
+            except Exception as e:
+                error_msg = str(e)
+                print(f"[DEBUG] {provider} failed: {error_msg}")
+                errors.append(f"{provider}: {error_msg}")
                 continue
+        error_msg = "\n".join(errors)
         raise RuntimeError(
-            "No fallback LLM provider succeeded. Install/start Ollama or configure HF_TOKEN/REPLICATE_API_TOKEN."
+            f"No fallback LLM provider succeeded.\n\n{error_msg}\n\n"
+            "Solutions:\n"
+            "1. Verify HuggingFace token: huggingface-cli login\n"
+            "2. Or install/start Ollama: ollama serve && ollama pull llama2\n"
+            "3. Or set REPLICATE_API_TOKEN for Replicate"
         )
 
     if api_key is None or api_key.strip() == "":
-        return _fallback_call()
+        hf_token = hf_api_key or HUGGINGFACE_API_TOKEN
+        if not hf_token:
+            raise ValueError("No API key available. Add OpenAI or HuggingFace API key in sidebar.")
+        return _fallback_call(hf_token)
 
     try:
         from openai import OpenAI
@@ -84,7 +223,10 @@ def _call_llm(prompt: str, api_key: str, model: str) -> str:
         )
         return response.choices[0].message.content or ""
     except Exception:
-        return _fallback_call()
+        hf_token = hf_api_key or HUGGINGFACE_API_TOKEN
+        if not hf_token:
+            raise ValueError("OpenAI call failed and no HuggingFace API key available.")
+        return _fallback_call(hf_token)
 
 
 def _column_mapping_inputs(
@@ -205,14 +347,24 @@ def _sidebar() -> None:
 
     st.sidebar.divider()
     st.sidebar.subheader("LLM settings")
+    if HUGGINGFACE_API_TOKEN:
+        st.sidebar.success("✓ HuggingFace API token loaded from environment (HF_TOKEN)")
     st.session_state.openai_api_key = st.sidebar.text_input(
         "OpenAI API key",
         type="password",
         value=st.session_state.get("openai_api_key", ""),
+        help="Leave empty to use HuggingFace instead.",
+    )
+    st.session_state.huggingface_api_key = st.sidebar.text_input(
+        "HuggingFace API key",
+        type="password",
+        value=st.session_state.get("huggingface_api_key", HUGGINGFACE_API_TOKEN),
+        help="Used as fallback if OpenAI key is not available. Auto-loaded from HF_TOKEN env var.",
     )
     st.session_state.openai_model = st.sidebar.text_input(
         "Model",
         value=st.session_state.get("openai_model", "gpt-4o-mini"),
+        help="OpenAI model name. If using HuggingFace, it will be mapped to a compatible model.",
     )
 
 
@@ -396,7 +548,8 @@ def _builder_page() -> None:
 
     if st.session_state.last_prompt and (is_edit or list_engines()):
         with st.expander("Latest rendered prompt", expanded=False):
-            st.markdown(st.session_state.last_prompt)
+            processed_prompt = _process_rendered_prompt(st.session_state.last_prompt)
+            st.markdown(processed_prompt)
 
 
 def _generator_page() -> None:
@@ -508,41 +661,64 @@ def _generator_page() -> None:
                     save_session=True,
                 )
             prompt = session["rendered_prompt"]
+            # Enhance prompt with target user information
+            prompt = _enhance_prompt_with_target_user(prompt, str(target_user_id))
             st.session_state.last_prompt = prompt
 
-            st.subheader("Prompt sent to LLM")
-            st.code(prompt, language="markdown")
+            with st.expander("Prompt sent to LLM", expanded=False):
+                st.code(prompt, language="markdown")
 
             if preview_btn:
                 st.info("Prompt preview only — no LLM call.")
             elif run_btn:
                 api_key = st.session_state.get("openai_api_key", "").strip()
-                if not api_key:
-                    st.warning("Add your OpenAI API key in the sidebar to run the LLM.")
+                hf_key = st.session_state.get("huggingface_api_key", "").strip()
+                # Fallback to environment variable if not in UI
+                if not hf_key:
+                    hf_key = HUGGINGFACE_API_TOKEN
+                if not api_key and not hf_key:
+                    st.error("❌ No API key available. Please add OpenAI or HuggingFace API key in the sidebar.")
                 else:
                     with st.spinner("Calling LLM…"):
-                        raw = _call_llm(
-                            prompt,
-                            api_key,
-                            st.session_state.get("openai_model", "gpt-4o-mini"),
-                        )
-                    st.session_state.last_response = raw
-                    st.subheader("Recommendation response")
-                    try:
-                        parsed = json.loads(raw)
-                        st.json(parsed)
-                    except json.JSONDecodeError:
-                        st.code(raw)
+                        try:
+                            # Show which API key is being used
+                            if api_key:
+                                st.info(f"✓ Using OpenAI API (model: {st.session_state.get('openai_model', 'gpt-4o-mini')})")
+                            else:
+                                hf_model = _get_hf_model_for_provider(st.session_state.get("openai_model", "gpt-4o-mini"))
+                                st.info(f"✓ Using HuggingFace API ({hf_model}) from {'sidebar' if hf_key else 'environment'}")
+                            
+                            raw = _call_llm(
+                                prompt,
+                                api_key,
+                                st.session_state.get("openai_model", "gpt-4o-mini"),
+                                hf_api_key=hf_key if hf_key else None,
+                                embedding_store=store,
+                            )
+                            st.session_state.last_response = raw
+
+                            # Display user interactions with timestamp
+                            st.subheader("Target user interactions")
+                            interactions = run_llminput.get("target_user_interactions") or []
+                            if interactions:
+                                import pandas as pd
+                                df_interactions = pd.DataFrame(interactions)
+                                st.dataframe(df_interactions, use_container_width=True)
+                            else:
+                                st.info("No interactions found.")
+
+                            # Display recommendations
+                            st.subheader("Recommendations")
+                            try:
+                                parsed = json.loads(raw)
+                                _format_recommendations_table(parsed)
+                            except json.JSONDecodeError:
+                                st.code(raw)
+                        except Exception as e:
+                            st.error(f"LLM call failed: {str(e)}")
 
         except Exception as exc:
             st.error(str(exc))
-
-    elif st.session_state.last_prompt:
-        st.subheader("Last prompt")
-        st.code(st.session_state.last_prompt, language="markdown")
-        if st.session_state.last_response:
-            st.subheader("Last LLM response")
-            st.code(st.session_state.last_response)
 
 
 def main() -> None:
