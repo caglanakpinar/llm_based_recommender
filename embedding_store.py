@@ -1056,36 +1056,6 @@ ItemEmbeddingStore = EmbeddingStore
 if __name__ == "__main__":
     store = build_and_store()
 
-    print("\n--- Item search: sci-fi books ---")
-    for hit in store.search_items("sci-fi fiction books", top_k=3):
-        print(f"[{hit['score']:.4f}] {hit['item_id']} -> {hit['item']['title']}")
-
-    print("\n--- User search: sci-fi and electronics ---")
-    for hit in store.search_users("likes sci-fi books and electronics", top_k=3):
-        print(f"[{hit['score']:.4f}] {hit['user_id']} ({hit['role']})")
-
-    print("\n--- Default prompt search: target user preferences ---")
-    for hit in store.search_default_prompt("target user likes sci-fi and electronics", top_k=3):
-        label = hit.get("placeholder") or hit.get("record_id")
-        print(f"[{hit['score']:.4f}] {label} ({hit.get('section')})")
-
-    print("\n--- Hybrid prompt embeddings (partial llminput override) ---")
-    session = store.generate_prompt_embeddings(
-        llminput_text='top_k is 5, user_profile is {"user_id": "user_999", "segment": "vip"}'
-    )
-    print(
-        f"Generated {session['generated_count']} prompt chunk(s), "
-        f"reused {session['default_count']} default prompt chunk(s)."
-    )
-    print(
-        f"Generated {session['user_generated_count']} user(s), "
-        f"reused {session['user_default_count']} default user(s)."
-    )
-    for row in session["records"]:
-        if row["vector_source"] == "generated":
-            label = row.get("placeholder") or row.get("record_id")
-            print(f"  [generated] {label}")
-
 class EmbeddingModelTrainer(Configs):
     """Lightweight embedding-model training scaffold for local experiments.
 
