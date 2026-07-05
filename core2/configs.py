@@ -38,6 +38,8 @@ class Configs:
     DEFAULT_ENGINES_DIR = "store/engines"
     DEFAULT_PROMPT_PATH = "recommender_prompt.md"
     DEFAULT_MODEL_NAME = "BAAI/bge-small-en-v1.5"
+    DEFAULT_EMBEDDER = "sentence_transformer"
+    DEFAULT_EMBEDDING_DIMENSION = 384
 
     DEFAULT_PROMPT_PLACEHOLDER_SECTIONS: dict[str, str] = {
         "action_weights": "1. Engine Description",
@@ -96,6 +98,14 @@ class Configs:
     DEFAULT_SESSION_DIR = "embeddings/session"
     DEFAULT_LLMINPUT_FILE = "llminput.json"
     DEFAULT_UPLOADS_DIR = "uploads"
+    DEFAULT_RECO_PROMPT_FILE = "reco_generator.md"
+    DEFAULT_ITEM_FAISS_INDEX_NAME = "itemdb.index"
+    DEFAULT_USER_FAISS_INDEX_NAME = "userdb.index"
+    DEFAULT_USER_ITEM_FAISS_INDEX_NAME = "useritemdb.index"
+    DEFAULT_ITEM_EMBEDDING_DIMENSION = 384
+    DEFAULT_USER_EMBEDDING_DIMENSION = 384
+    DEFAULT_USER_ITEM_EMBEDDING_DIMENSION = 384
+
 
     _YAML_KEYS = frozenset(
         {
@@ -298,6 +308,10 @@ class Configs:
         self.session_dir = self.engine_root / self.session_dir_rel
         self.llminput_path = self.engine_root / self.llminput_file
         self.uploads_path = self.engine_root / self.uploads_dir_rel
+        self.relevance_score_prompt_path = self.resolve_repo_path("relevance_score_generator.md")
+        self.user_item_pair_prompt_path = self.resolve_repo_path("user_item_pair.md")
+        self.item_prompt_path = self.resolve_repo_path("item.md")
+        self.user_prompt_path = self.resolve_repo_path("user.md")
 
     def resolve_repo_path(self, relative: str | Path) -> Path:
         path = Path(relative)

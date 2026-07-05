@@ -353,22 +353,115 @@ def eligible_flag(data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
 
 
 def relevance_score(data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-    # default for pair scoring
+    # Pair-level relevance scoring. If label exists, fit a simple linear model.
     group_cols = _group_pair(kwargs)
+    df = data.copy() if isinstance(data, pd.DataFrame) else pd.DataFrame()
+    df = _ensure_group_cols(df, group_cols)
+    if df.empty:
+        return pd.DataFrame(columns=[*group_cols, "relevance_score"])
 
-    def _calc(g: pd.DataFrame) -> float:
-        if "relevance_score" in g.columns:
-            return _mean_or_zero(g["relevance_score"])
-        base = (
-            0.5 * float(category_match_score(g, **kwargs)["category_match_score"].mean())
-            + 0.3 * float(tag_overlap_score(g, **kwargs)["tag_overlap_score"].mean())
-            + 0.2 * float(price_fit_score(g, **kwargs)["price_fit_score"].mean())
+    # If explicit relevance labels already exist, preserve grouped values.
+    if "relevance_score" in df.columns:
+        return _group_feature(df, "relevance_score", group_cols, lambda g: _mean_or_zero(g["relevance_score"]))
+
+    pair_df = df[group_cols].drop_duplicates().reset_index(drop=True)
+
+    model_feature_funcs = [
+        num_user_item_interactions,
+        days_since_last_user_item_interaction,
+        num_views_user_item,
+        num_clicks_user_item,
+        purchased_user_item_flag,
+        negative_user_item_flag,
+        weighted_user_item_signal,
+        recency_weighted_user_item_signal,
+        pair_confidence_score,
+        item_popularity_percentile,
+        item_conversion_rate,
+        pair_novelty_score,
+        num_similar_users_interacted_item,
+        num_similar_users_purchased_item,
+        peer_agreement_score,
+        next_item_probability,
+        session_cooccurrence_score,
+        item_transition_score,
+        eligible_flag,
+    ]
+
+    for fn in model_feature_funcs:
+        fdf = fn(df, **kwargs)
+        feature_cols = [c for c in fdf.columns if c not in group_cols]
+        if len(feature_cols) != 1:
+            continue
+        pair_df = pair_df.merge(fdf, on=group_cols, how="left")
+
+    numeric_cols = [
+        c for c in pair_df.columns
+        if c not in group_cols and pd.api.types.is_numeric_dtype(pair_df[c])
+    ]
+    if not numeric_cols:
+        pair_df["relevance_score"] = 0.0
+        return pair_df[[*group_cols, "relevance_score"]]
+
+    x = pair_df[numeric_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0).to_numpy(dtype=float)
+
+    label_col = str(kwargs.get("label_col", "label"))
+    reg_lambda = float(kwargs.get("reg_lambda", 1e-3))
+    y_df = None
+    if label_col in df.columns:
+        y_df = _group_feature(df, label_col, group_cols, lambda g: _mean_or_zero(g[label_col]))
+        y_df = y_df.rename(columns={label_col: "_y"})
+
+    if y_df is not None:
+        train_df = pair_df.merge(y_df, on=group_cols, how="left")
+        y = pd.to_numeric(train_df["_y"], errors="coerce").fillna(np.nan).to_numpy(dtype=float)
+        valid = np.isfinite(y)
+    else:
+        train_df = pair_df.copy()
+        y = np.array([], dtype=float)
+        valid = np.array([], dtype=bool)
+
+    x_train = x[valid] if valid.size else np.empty((0, x.shape[1]))
+    y_train = y[valid] if valid.size else np.empty((0,))
+
+    if x_train.shape[0] >= max(5, x_train.shape[1]) and np.nanstd(y_train) > 0:
+        x_mean = x_train.mean(axis=0)
+        x_std = x_train.std(axis=0)
+        x_std[x_std == 0] = 1.0
+
+        xz = (x_train - x_mean) / x_std
+        xa = np.hstack([np.ones((xz.shape[0], 1)), xz])
+        identity = np.eye(xa.shape[1])
+        identity[0, 0] = 0.0
+        beta = np.linalg.pinv(xa.T @ xa + reg_lambda * identity) @ xa.T @ y_train
+
+        xz_full = (x - x_mean) / x_std
+        xa_full = np.hstack([np.ones((xz_full.shape[0], 1)), xz_full])
+        preds = xa_full @ beta
+        scores = np.clip(preds, 0.0, 1.0)
+    else:
+        # Fallback deterministic weighted score when labels are not available.
+        conf = pair_df.get("pair_confidence_score", pd.Series(0.0, index=pair_df.index)).astype(float)
+        rec = pair_df.get("recency_weighted_user_item_signal", pd.Series(0.0, index=pair_df.index)).astype(float)
+        peer = pair_df.get("peer_agreement_score", pd.Series(0.0, index=pair_df.index)).astype(float)
+        conv = pair_df.get("item_conversion_rate", pd.Series(0.0, index=pair_df.index)).astype(float)
+        nxt = pair_df.get("next_item_probability", pd.Series(0.0, index=pair_df.index)).astype(float)
+        elig = pair_df.get("eligible_flag", pd.Series(1.0, index=pair_df.index)).astype(float)
+        neg = pair_df.get("negative_user_item_flag", pd.Series(0.0, index=pair_df.index)).astype(float)
+
+        scores = (
+            0.35 * conf
+            + 0.20 * np.clip(rec, 0.0, 1.0)
+            + 0.15 * peer
+            + 0.10 * conv
+            + 0.10 * nxt
+            + 0.10 * np.clip(elig, 0.0, 1.0)
+            - 0.25 * np.clip(neg, 0.0, 1.0)
         )
-        eligible = float(eligible_flag(g, **kwargs)["eligible_flag"].mean())
-        penalty = 0.5 if eligible <= 0 else 0.0
-        return float(np.clip(base - penalty, 0.0, 1.0))
+        scores = np.clip(scores.to_numpy(dtype=float), 0.0, 1.0)
 
-    return _group_feature(data, "relevance_score", group_cols, _calc)
+    pair_df["relevance_score"] = scores
+    return pair_df[[*group_cols, "relevance_score"]]
 
 
 # -------------------------
@@ -911,3 +1004,4 @@ FEATURES = {
         "relevance_score": relevance_score,
     },
 }
+

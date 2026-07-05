@@ -1,24 +1,24 @@
 user_profile_columns:
-  user_id: null
-  segment: null
-  notes: null
+  user_id:
+  segment:
+  notes:
 
 item_catalog_columns:
-  item_id: null
-  title: null
-  category: null
-  tags: null
-  price: null
-  description: null
+  item_id:
+  title:
+  category:
+  tags:
+  price:
+  description: 
 
 user_item_columns:
-  user_id: null
-  item_id: null
-  created_at: null
-  action: null
-  value: null
-  session_id: null
-  context: null
-  rank: null
-  score: null
-  reason: null
+  user_id: 
+  item_id: 
+  created_at: 
+  action: 
+  value: 
+  session_id: 
+  context: 
+  rank: 
+  score: 
+  reason: 

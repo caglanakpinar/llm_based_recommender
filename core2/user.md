@@ -5,11 +5,9 @@ Start with User ID and describe the user profile using placeholders.
 - User ID is {user_id}.
 - Segment of {user_id} is {segment}.
 - Notes for {user_id}: {notes}.
-- Generated prompt for {user_id}: {generated_prompt}.
-- Generated prompt embedding vectors for {user_id}: {generated_prompt_emb_vectors}.
 
 ## Single-Line Prompt Template
-user_id: {user_id}; segment: {segment}; notes: {notes}; generated_prompt: {generated_prompt}; generated_prompt_emb_vectors: {generated_prompt_emb_vectors}
+user_id: {user_id}; segment: {segment}; notes: {notes}
 
 ## Key Features
 - Profile features:
@@ -49,7 +47,3 @@ user_id: {user_id}; segment: {segment}; notes: {notes}; generated_prompt: {gener
 	- reactivation likelihood for {user_id} is {reactivation_likelihood}
 	- lifecycle stage for {user_id} is {lifecycle_stage}
 
-- Model-ready features:
-	- user embedding vector for {user_id} is {user_embedding_vector}
-	- generated prompt embedding vector for {user_id} is {generated_prompt_emb_vectors}
-	- final user affinity prior score for {user_id} is {user_affinity_prior_score}
