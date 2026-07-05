@@ -1,6 +1,26 @@
 from core.configs import Configs
+from core.logger import logger
 from datetime import datetime
 from typing import Optional, List, Dict, Any
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModel
+
+
+class _LocalConversationMemory:
+    """Minimal drop-in memory when LangChain memory classes are unavailable."""
+
+    def __init__(self) -> None:
+        self.messages: list[dict[str, str]] = []
+
+    def save_context(self, inputs: dict[str, Any], outputs: dict[str, Any]) -> None:
+        user_text = str(inputs.get("input", ""))
+        ai_text = str(outputs.get("output", ""))
+        if user_text:
+            self.messages.append({"role": "user", "content": user_text})
+        if ai_text:
+            self.messages.append({"role": "assistant", "content": ai_text})
+
+    def clear(self) -> None:
+        self.messages.clear()
 
 
 class BaseLLM(Configs):
@@ -40,6 +60,7 @@ class FreeLLMCaller(BaseLLM):
     """
     def __init__(self, api_key: str = None, model: str = "mistral-7b-instruct", provider: str = "huggingface", embedding_store=None, top_k: int = 3):
         super().__init__(api_key, model)
+        Configs.configure_hf_environment()
         self.provider = provider.lower()
         self.embedding_store = embedding_store
         self.top_k = top_k
@@ -49,42 +70,55 @@ class FreeLLMCaller(BaseLLM):
         self.chat_history: List[Dict[str, Any]] = []
         self._init_langchain_components()
 
+    @staticmethod
+    def _hf_model_cache_dir() -> str:
+        """Project-local cache for model files to avoid restricted system paths."""
+        cache_root = Configs.configure_hf_environment()
+        model_cache = cache_root / "models"
+        model_cache.mkdir(parents=True, exist_ok=True)
+        return str(model_cache)
+
     def _init_langchain_components(self):
-        """Initialize LangChain components for conversation memory and chaining."""
-        try:
-            from langchain.memory import ConversationBufferMemory
-            from langchain.prompts import PromptTemplate
-            
-            # Create memory store for conversation history
-            self.memory = ConversationBufferMemory(
-                memory_key="chat_history",
-                return_messages=True,
-                human_prefix="User",
-                ai_prefix="Assistant"
-            )
-        except ImportError:
-            print("[WARNING] LangChain not installed. Chat history will be stored manually.")
-            self.memory = None
+        """Initialize conversation memory without deprecated LangChain memory APIs."""
+        self.memory = _LocalConversationMemory()
+        logger.info("Using local conversation memory (LangChain memory disabled)")
 
     def call(self, prompt: str) -> str:
         """Call with embedding-based RAG pipeline using pretrained models and LangChain integration."""
+        logger.info("LLM pipeline start (provider=%s, model=%s)", self.provider, self.model)
         # Log input to chat history
         self._add_to_history(role="user", content=prompt)
         
         # Augment prompt with FAISS search results if embedding_store is available
+        logger.info("Step 1/5: Augmenting prompt with RAG context")
         augmented_prompt = self._augment_prompt_with_rag(prompt)
         
         # Add chat history context to augmented prompt
+        logger.info("Step 2/5: Injecting chat history context")
         augmented_prompt = self._add_chat_history_context(augmented_prompt)
         
         # Convert augmented prompt to embeddings using pretrained encoder
+        logger.info("Step 3/5: Encoding augmented prompt to embeddings")
         prompt_embeddings = self._encode_to_embeddings(augmented_prompt)
+        try:
+            logger.info("Embeddings generated (dimensions=%s)", len(prompt_embeddings))
+        except Exception:
+            logger.info("Embeddings generated")
         
         # Retrieve relevant context from embedding space
+        logger.info("Step 4/5: Retrieving context from embedding space")
         retrieved_context = self._retrieve_from_embeddings(prompt_embeddings, augmented_prompt)
+        if isinstance(retrieved_context, dict):
+            similar_items = retrieved_context.get("similar_items")
+            similar_users = retrieved_context.get("similar_users")
+            item_count = len(similar_items) if isinstance(similar_items, list) else 0
+            user_count = len(similar_users) if isinstance(similar_users, list) else 0
+            logger.info("Retrieved context summary (items=%s, users=%s)", item_count, user_count)
         
         # Decode embeddings back to text using pretrained decoder
+        logger.info("Step 5/5: Decoding embeddings to recommendation text")
         result_text = self._decode_from_embeddings(prompt_embeddings, retrieved_context)
+        logger.info("LLM pipeline completed")
         
         # Log output to chat history and LangChain memory
         self._add_to_history(role="assistant", content=result_text)
@@ -100,7 +134,10 @@ class FreeLLMCaller(BaseLLM):
             import numpy as np
             
             # Use pretrained sentence embeddings model
-            model = SentenceTransformer('all-MiniLM-L6-v2')
+            model = SentenceTransformer(
+                "all-MiniLM-L6-v2",
+                cache_folder=self._hf_model_cache_dir(),
+            )
             embeddings = model.encode([text])
             return embeddings[0].tolist() if hasattr(embeddings, 'tolist') else embeddings[0]
         except Exception as e:
@@ -142,8 +179,9 @@ class FreeLLMCaller(BaseLLM):
             
             # Use pretrained seq2seq model for decoding
             model_name = "facebook/bart-base"
-            tokenizer = AutoTokenizer.from_pretrained(model_name)
-            model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+            cache_dir = self._hf_model_cache_dir()
+            tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=cache_dir)
+            model = AutoModelForSeq2SeqLM.from_pretrained(model_name, cache_dir=cache_dir)
             
             # Build input from context
             input_text = self._format_context_as_input(context)
@@ -220,8 +258,9 @@ class FreeLLMCaller(BaseLLM):
             from transformers import AutoTokenizer, AutoModel
             import torch
             
-            tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
-            model = AutoModel.from_pretrained("distilbert-base-uncased")
+            cache_dir = self._hf_model_cache_dir()
+            tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased", cache_dir=cache_dir)
+            model = AutoModel.from_pretrained("distilbert-base-uncased", cache_dir=cache_dir)
             
             inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=128)
             with torch.no_grad():
@@ -435,5 +474,11 @@ class FreeLLMCaller(BaseLLM):
             return f"{minutes} minutes"
         except Exception:
             return "N/A"
+
+class LLMRecommenderTrainer(Configs, ):
+    """Trainer class for LLM-based recommender system with RAG pipeline."""
+    def __init__(self, api_key: str = None, model: str = "mistral-7b-instruct", provider: str = "huggingface", embedding_store=None, top_k: int = 3):
+        super().__init__(api_key, model, provider, embedding_store, top_k)
+        logger.info("LLMRecommenderTrainer initialized (model=%s, provider=%s)", model, provider)
 
 

@@ -29,6 +29,8 @@ class Configs:
     HF_CACHE_DIR = current_dir / ".cache" / "huggingface"
     HF_HUB_CACHE_DIR = HF_CACHE_DIR / "hub"
     HF_TRANSFORMERS_CACHE_DIR = HF_CACHE_DIR / "transformers"
+    HF_MODELS_CACHE_DIR = HF_CACHE_DIR / "models"
+    TORCH_CACHE_DIR = current_dir / ".cache" / "torch"
 
     # Repo-level defaults (embedding_store.py lines 27–30).
     DEFAULT_DATA_DIR = "data"
@@ -158,9 +160,13 @@ class Configs:
         cls.HF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         cls.HF_HUB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         cls.HF_TRANSFORMERS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cls.HF_MODELS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cls.TORCH_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         os.environ["HF_HOME"] = str(cls.HF_CACHE_DIR)
         os.environ["HUGGINGFACE_HUB_CACHE"] = str(cls.HF_HUB_CACHE_DIR)
         os.environ["TRANSFORMERS_CACHE"] = str(cls.HF_TRANSFORMERS_CACHE_DIR)
+        os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(cls.HF_MODELS_CACHE_DIR)
+        os.environ["TORCH_HOME"] = str(cls.TORCH_CACHE_DIR)
         os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
         return cls.HF_CACHE_DIR
 

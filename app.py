@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
+
 
 import streamlit as st
 
+from core.logger import logger
+from core.configs import Configs
 from schema_defaults import DEFAULT_ITEM_CATALOG_COLUMNS, DEFAULT_USER_PROFILE_COLUMNS
 from reco_engine import (
     build_engine,
@@ -36,6 +40,7 @@ st.set_page_config(
 
 
 HUGGINGFACE_API_TOKEN = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_TOKEN") or ""
+rag = None
 
 # --- session state ---
 if "page" not in st.session_state:
@@ -159,6 +164,166 @@ def _format_recommendations_table(parsed_response: dict[str, Any]) -> None:
         st.json(parsed_response)
 
 
+def _extract_json_payload(text: str) -> dict[str, Any] | None:
+    """Extract JSON object from raw LLM text, including fenced ```json blocks."""
+    if not text or not isinstance(text, str):
+        return None
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    fenced = re.search(r"```json\s*(\{[\s\S]*?\})\s*```", text, flags=re.IGNORECASE)
+    if fenced:
+        try:
+            parsed = json.loads(fenced.group(1))
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+    for match in re.finditer(r"\{[\s\S]*\}", text):
+        candidate = match.group(0)
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            continue
+
+    return None
+
+
+def _recommendations_to_markdown(parsed_response: dict[str, Any]) -> str:
+    """Render recommendations dict as markdown for UI readability."""
+    recs = parsed_response.get("recommendations")
+    if not isinstance(recs, list) or not recs:
+        return "No recommendations generated."
+
+    lines = []
+    for idx, rec in enumerate(recs, start=1):
+        if not isinstance(rec, dict):
+            lines.append(f"{idx}. {str(rec)}")
+            continue
+
+        title = rec.get("title") or rec.get("name") or rec.get("item_id") or f"Item {idx}"
+        score = rec.get("score")
+        reason = rec.get("reason")
+        item_id = rec.get("item_id")
+
+        header = f"{idx}. **{title}**"
+        if item_id and str(item_id) != str(title):
+            header += f" (`{item_id}`)"
+        if score is not None:
+            header += f" - score: `{score}`"
+        lines.append(header)
+
+        if reason:
+            lines.append(f"   - reason: {reason}")
+
+        signals = rec.get("signals")
+        if isinstance(signals, list) and signals:
+            lines.append(f"   - signals: {', '.join(str(s) for s in signals)}")
+
+    return "\n".join(lines)
+
+
+def _render_recommendations_markdown(raw: dict[str, Any] | str) -> None:
+    """Always show recommendation output in markdown-first format."""
+    parsed: dict[str, Any] | None = None
+
+    if isinstance(raw, dict):
+        answer = raw.get("answer")
+        if isinstance(answer, str):
+            parsed = _extract_json_payload(answer)
+        if parsed is None and "recommendations" in raw:
+            parsed = raw
+    else:
+        parsed = _extract_json_payload(raw)
+
+    if parsed is not None:
+        st.markdown(_recommendations_to_markdown(parsed))
+        return
+
+    if isinstance(raw, dict):
+        answer = raw.get("answer")
+        if isinstance(answer, str) and answer.strip():
+            st.markdown(answer)
+            return
+
+        context_items = raw.get("context") if isinstance(raw.get("context"), list) else []
+        if context_items:
+            lines = ["No structured recommendations found. Retrieved context:"]
+            for i, item in enumerate(context_items[:5], start=1):
+                if not isinstance(item, dict):
+                    continue
+                source = item.get("source", "unknown")
+                score = item.get("score", "n/a")
+                text = str(item.get("text", "")).strip().replace("\n", " ")
+                snippet = text[:220] + ("..." if len(text) > 220 else "")
+                lines.append(f"{i}. **{source}** (score: `{score}`) - {snippet}")
+            st.markdown("\n".join(lines))
+            return
+
+        st.markdown("No recommendations could be rendered from the model output.")
+        return
+
+    if isinstance(raw, str) and raw.strip():
+        st.markdown(raw)
+    else:
+        st.markdown("No recommendations were returned.")
+
+
+def _extract_recommendation_rows(raw: dict[str, Any] | str) -> list[dict[str, Any]]:
+    """Extract recommendation rows from structured dict or JSON text."""
+    parsed: dict[str, Any] | None = None
+    if isinstance(raw, dict):
+        if isinstance(raw.get("recommendations"), list):
+            parsed = raw
+        else:
+            answer = raw.get("answer")
+            if isinstance(answer, str):
+                parsed = _extract_json_payload(answer)
+    else:
+        parsed = _extract_json_payload(raw)
+
+    if not isinstance(parsed, dict):
+        return []
+    recs = parsed.get("recommendations")
+    if not isinstance(recs, list):
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for idx, rec in enumerate(recs, start=1):
+        if not isinstance(rec, dict):
+            continue
+        tags = rec.get("tags")
+        if isinstance(tags, list):
+            tags_text = ", ".join(str(tag) for tag in tags)
+        elif tags is None:
+            tags_text = ""
+        else:
+            tags_text = str(tags)
+
+        rows.append(
+            {
+                "rank": rec.get("rank", idx),
+                "item_id": rec.get("item_id", ""),
+                "title": rec.get("title", ""),
+                "category": rec.get("category", ""),
+                "tags": tags_text,
+                "price": rec.get("price", ""),
+                "description": rec.get("description", ""),
+                "score": rec.get("score", ""),
+                "reason": rec.get("reason", ""),
+            }
+        )
+    return rows
+
+
 def _get_hf_model_for_provider(openai_model: str) -> str:
     """Map OpenAI model names to HuggingFace compatible models."""
     model_map = {
@@ -206,6 +371,11 @@ def _call_llm(prompt: str, api_key: str, model: str, hf_api_key: str | None = No
             "3. Or set REPLICATE_API_TOKEN for Replicate"
         )
 
+    def fallback_call2() -> str:
+        from core.rag import LangChainRAG
+        rag = LangChainRAG(index_dir=Configs.current_dir / "embeddings", llm_model=model, api_key=hf_api_key)
+        return rag.answer(prompt, top_k=5)
+
     if api_key is None or api_key.strip() == "":
         hf_token = hf_api_key or HUGGINGFACE_API_TOKEN
         if not hf_token:
@@ -224,9 +394,10 @@ def _call_llm(prompt: str, api_key: str, model: str, hf_api_key: str | None = No
         return response.choices[0].message.content or ""
     except Exception:
         hf_token = hf_api_key or HUGGINGFACE_API_TOKEN
-        if not hf_token:
-            raise ValueError("OpenAI call failed and no HuggingFace API key available.")
-        return _fallback_call(hf_token)
+        try:
+            return _fallback_call(hf_token)
+        except Exception:
+            return fallback_call2()
 
 
 def _column_mapping_inputs(
@@ -369,6 +540,7 @@ def _sidebar() -> None:
 
 
 def _builder_page() -> None:
+    global rag
     edit_name = st.session_state.edit_engine
     is_edit = edit_name is not None and engine_exists(edit_name)
 
@@ -533,6 +705,18 @@ def _builder_page() -> None:
                     users_parquet_folder=active_users,
                     items_parquet_folder=active_items,
                 )
+            with st.spinner("Building Initial RAG Model"):
+                from core.rag import LangChainRAG
+                rag_model = _get_hf_model_for_provider(
+                    st.session_state.get("openai_model", "gpt-4o-mini")
+                )
+                rag = LangChainRAG(
+                    index_dir=Configs.current_dir / "embeddings", 
+                    llm_model=rag_model,
+                    api_key=st.session_state.get("huggingface_api_key", HUGGINGFACE_API_TOKEN),
+                )
+                rag._build_llm()
+                st.success("Initial RAG Model built successfully")
 
             st.session_state.selected_engine = engine_name
             st.session_state.edit_engine = None
@@ -553,8 +737,11 @@ def _builder_page() -> None:
 
 
 def _generator_page() -> None:
+    global rag
     engines = list_engines()
+    logger.info("Entered Reco Generator page (engines=%s)", len(engines))
     if not engines:
+        logger.warning("Reco Generator blocked: no engines available")
         st.warning("Create a reco engine first.")
         return
 
@@ -566,9 +753,16 @@ def _generator_page() -> None:
 
     engine_name = st.selectbox("Select reco engine", engines, index=default_idx)
     st.session_state.selected_engine = engine_name
+    logger.info("Selected engine: %s", engine_name)
 
     meta = load_engine_meta(engine_name)
     base_llminput = load_engine_llminput(engine_name)
+    logger.info(
+        "Loaded engine meta (users_folder=%s, interactions_folder=%s, top_k=%s)",
+        meta.get("users_parquet_folder"),
+        meta.get("interactions_parquet_folder"),
+        meta.get("top_k"),
+    )
 
     users_folder = meta.get("users_parquet_folder")
     interactions_folder = meta.get("interactions_parquet_folder")
@@ -577,6 +771,7 @@ def _generator_page() -> None:
         try:
             user_ids = list_parquet_user_ids(users_folder)
         except Exception as exc:
+            logger.exception("Failed to load user ids from folder: %s", users_folder)
             st.warning(str(exc))
 
     saved_profile = base_llminput.get("user_profile") or {}
@@ -624,6 +819,8 @@ def _generator_page() -> None:
         run_btn = st.button("Build prompt & run recommendation", type="primary", use_container_width=True)
     with col_b:
         preview_btn = st.button("Preview prompt only", use_container_width=True)
+    if run_btn or preview_btn:
+        logger.info("Generator action triggered (run_btn=%s, preview_btn=%s)", run_btn, preview_btn)
 
     if run_btn or preview_btn:
         overrides: dict[str, Any] = {
@@ -634,8 +831,14 @@ def _generator_page() -> None:
         store = get_engine_store(engine_name)
         try:
             if not target_user_id:
+                logger.error("Generator validation failed: target user missing")
                 raise ValueError("Target user is required.")
             if not users_folder or not interactions_folder:
+                logger.error(
+                    "Generator validation failed: missing parquet paths (users=%s, interactions=%s)",
+                    users_folder,
+                    interactions_folder,
+                )
                 raise ValueError(
                     "Engine is missing user or interaction parquet paths. Rebuild the engine."
                 )
@@ -653,8 +856,15 @@ def _generator_page() -> None:
                     "generated_at": run_llminput["generated_at"],
                 }
             )
+            logger.info(
+                "Built run llminput (target_user=%s, target_interactions=%s, peers=%s)",
+                target_user_id,
+                len(run_llminput.get("target_user_interactions") or []),
+                len(run_llminput.get("other_users_interactions") or []),
+            )
 
             with st.spinner("Preparing prompt…"):
+                logger.info("Generating prompt embeddings for run")
                 session = store.generate_prompt_embeddings(
                     llminput_overrides=overrides,
                     base_llminput=base_llminput,
@@ -664,60 +874,90 @@ def _generator_page() -> None:
             # Enhance prompt with target user information
             prompt = _enhance_prompt_with_target_user(prompt, str(target_user_id))
             st.session_state.last_prompt = prompt
+            logger.info(f"Prompt generated for engine '{engine_name}' and user '{target_user_id}'.")
 
             with st.expander("Prompt sent to LLM", expanded=False):
                 st.code(prompt, language="markdown")
 
-            if preview_btn:
-                st.info("Prompt preview only — no LLM call.")
-            elif run_btn:
-                api_key = st.session_state.get("openai_api_key", "").strip()
-                hf_key = st.session_state.get("huggingface_api_key", "").strip()
-                # Fallback to environment variable if not in UI
-                if not hf_key:
-                    hf_key = HUGGINGFACE_API_TOKEN
-                if not api_key and not hf_key:
-                    st.error("❌ No API key available. Please add OpenAI or HuggingFace API key in the sidebar.")
-                else:
-                    with st.spinner("Calling LLM…"):
-                        try:
-                            # Show which API key is being used
-                            if api_key:
-                                st.info(f"✓ Using OpenAI API (model: {st.session_state.get('openai_model', 'gpt-4o-mini')})")
-                            else:
-                                hf_model = _get_hf_model_for_provider(st.session_state.get("openai_model", "gpt-4o-mini"))
-                                st.info(f"✓ Using HuggingFace API ({hf_model}) from {'sidebar' if hf_key else 'environment'}")
-                            
-                            raw = _call_llm(
-                                prompt,
-                                api_key,
-                                st.session_state.get("openai_model", "gpt-4o-mini"),
-                                hf_api_key=hf_key if hf_key else None,
-                                embedding_store=store,
-                            )
-                            st.session_state.last_response = raw
+            api_key = st.session_state.get("openai_api_key", "").strip()
+            hf_key = st.session_state.get("huggingface_api_key", "").strip()
+            # Fallback to environment variable if not in UI
+            if not hf_key:
+                hf_key = HUGGINGFACE_API_TOKEN
+            if not api_key and not hf_key:
+                logger.error("No API key available for generator run")
+                st.error("❌ No API key available. Please add OpenAI or HuggingFace API key in the sidebar.")
 
-                            # Display user interactions with timestamp
-                            st.subheader("Target user interactions")
-                            interactions = run_llminput.get("target_user_interactions") or []
-                            if interactions:
-                                import pandas as pd
-                                df_interactions = pd.DataFrame(interactions)
-                                st.dataframe(df_interactions, use_container_width=True)
-                            else:
-                                st.info("No interactions found.")
+            raw: dict[str, Any] | str | None = None
+            with st.spinner("Calling LLM…"):
+                try:
+                    logger.info("About to import LangChainRAG")
+                    from core.rag import LangChainRAG
+                    logger.info("LangChainRAG import successful")
+                    logger.info(
+                        "Initializing LangChainRAG (index_dir=%s, model=%s)",
+                        store.embeddings_dir,
+                        "microsoft/Phi-3-mini-4k-instruct",
+                    )
+                    logger.info("Using HuggingFace API key: %s", "****" if hf_key else "None", store.embeddings_dir)
+                    rag = LangChainRAG(
+                        index_dir=store.embeddings_dir,
+                        llm_model="microsoft/Phi-3-mini-4k-instruct",
+                        api_key=hf_key,
+                    )
+                    raw = rag.answer(prompt, top_k=int(run_top_k))
+                    logger.info("RAG answer returned (type=%s)", type(raw).__name__)
+                    if isinstance(raw, dict):
+                        answer_text = str(raw.get("answer", ""))
+                    else:
+                        answer_text = str(raw)
+                    rag.add_chat_history("user", prompt)
+                    rag.add_chat_history("assistant", answer_text)
+                    st.session_state.last_response = raw
+                except Exception as e:
+                    logger.exception("LLM call failed in generator flow")
+                    st.error(f"LLM call failed: {str(e)}")
+                    st.exception(e)
 
-                            # Display recommendations
-                            st.subheader("Recommendations")
-                            try:
-                                parsed = json.loads(raw)
-                                _format_recommendations_table(parsed)
-                            except json.JSONDecodeError:
+                if raw is not None:
+                    st.subheader("Recommendations")
+                    try:
+                        # Display user interactions with target user id
+                        st.subheader("Target user interactions")
+                        interactions = run_llminput.get("target_user_interactions") or []
+                        if interactions:
+                            import pandas as pd
+                            df_interactions = pd.DataFrame(interactions)
+                            st.dataframe(df_interactions, use_container_width=True)
+                        else:
+                            st.info("No interactions found.")
+
+                        # Display recommendations
+                        st.subheader("Recommendations")
+                        rows = _extract_recommendation_rows(raw)
+                        logger.info("Extracted recommendation rows (count=%s)", len(rows))
+                        if rows:
+                            import pandas as pd
+                            with st.expander("Recommendations Table", expanded=True):
+                                st.dataframe(pd.DataFrame(rows), use_container_width=True)
+                        else:
+                            logger.warning("No structured recommendation rows found")
+                            st.info("No structured recommendation rows found.")
+
+                        with st.expander("Recommendations in Markdown", expanded=True):
+                            _render_recommendations_markdown(raw)
+
+                        with st.expander("Raw model output", expanded=False):
+                            if isinstance(raw, dict):
+                                st.json(raw)
+                            else:
                                 st.code(raw)
-                        except Exception as e:
-                            st.error(f"LLM call failed: {str(e)}")
+                    except Exception as e:
+                        logger.exception("Recommendation rendering failed")
+                        st.error(f"Recommendations failed: {str(e)}")
 
         except Exception as exc:
+            logger.exception("Generator flow failed")
             st.error(str(exc))
 
 

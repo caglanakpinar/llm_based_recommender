@@ -1053,9 +1053,6 @@ def build_and_store(engine_name: str = "default") -> EmbeddingStore:
 ItemEmbeddingStore = EmbeddingStore
 
 
-if __name__ == "__main__":
-    store = build_and_store()
-
 class EmbeddingModelTrainer(Configs):
     """Lightweight embedding-model training scaffold for local experiments.
 
@@ -1193,4 +1190,36 @@ class EmbeddingModelTrainer(Configs):
             "output_dir": str(self.output_dir),
         }
     
+
+def train_embedding_model(
+    project_name: str = "default",
+    model_name: str | None = None,
+    examples: list[dict[str, Any]] | None = None,
+    epochs: int = 1,
+    batch_size: int = 4,
+    learning_rate: float = 2e-5,
+) -> dict[str, Any]:
+    trainer = EmbeddingModelTrainer(project_name, model_name=model_name)
+    return trainer.train(
+        examples or [],
+        epochs=epochs,
+        batch_size=batch_size,
+        learning_rate=learning_rate,
+    )
+
+
+if __name__ == "__main__":
+    store = build_and_store()
+    train_embedding_model(
+        project_name=store.configs.engine_name,
+        model_name=store.configs.model_name,
+        examples=[
+            {"text": "Sample item description", "label": "item"},
+            {"text": "Sample user profile", "label": "user"},
+        ],
+        epochs=1,
+        batch_size=2,
+        learning_rate=1e-4,
+    )
+
 

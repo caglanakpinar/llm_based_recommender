@@ -1,4 +1,3 @@
-from core.base_llm import BaseLLM
 from core.configs import Configs
 from core.llms import FreeLLMCaller, GPTCaller
 from embedding_store import (
@@ -9,7 +8,33 @@ from embedding_store import (
 from typing import Any
 
 
-class RecoGenerator(BaseLLM):
+class BaseRecoGenerator(Configs):
+    """
+    Base class for recommendation generators.
+    Subclasses should implement the call method to generate recommendations.
+    """
+    def __init__(self, api_key: str | None, model: str = "gpt-3.5-turbo"):
+        super().__init__(api_key, model)
+
+    def generate_prompt(self, result: dict[str, Any], llminput: dict[str, Any] | None = None) -> str:
+        """
+        Generate a prompt for the LLM based on the result and optional llminput.
+        This method can be overridden by subclasses for custom prompt generation.
+        """
+        raise NotImplementedError("Subclasses must implement the generate_prompt method.")
+
+    def call(self, prompt: str) -> str:
+
+        raise NotImplementedError("Subclasses must implement the call method.")
+
+    def generate_recommendations(self, prompt: str) -> str:
+        """
+        Generate recommendations based on the provided prompt.
+        This method can be overridden by subclasses for custom behavior.
+        """
+        return self.call(prompt)
+
+class ZeroShotRecoGenerator(BaseRecoGenerator):
     """
     Vector-based LLM using FAISS embeddings for similarity search.
     Uses embedding vectors from store/embeddings/ to find and rank recommendations
@@ -45,11 +70,18 @@ class RecoGenerator(BaseLLM):
                 replacement = str(value) if value is not None else ""
             template = template.replace("{" + key + "}", replacement)
         return template
+    
+    def get_provider(self):
+        """Determine the LLM provider based on available API keys."""
+        hf_token = self.api_key or self.get_hf_token()
+        if hf_token:
+            return "huggingface"
+        return "ollama"
 
     def _get_llm_caller(self) -> BaseLLM:
         if self.api_key:
             return GPTCaller(api_key=self.api_key, model=self.model)
-        return FreeLLMCaller(model=self.model, provider="ollama")
+        return FreeLLMCaller(model=self.model, provider="huggingface") # self.get_provider())
 
     def call_llm(self, prompt: str) -> str:
         caller = self._get_llm_caller()

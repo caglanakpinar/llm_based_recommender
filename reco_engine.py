@@ -12,6 +12,7 @@ from typing import Any
 import pandas as pd
 
 from core.configs import Configs
+from core.rag import LangChainRAG
 from embedding_store import (
     EmbeddingStore,
     collect_user_records,
@@ -586,3 +587,62 @@ def default_item_catalog_json() -> str:
 
 def default_user_profile_json() -> str:
     return json.dumps(load_default_user_profile(), indent=2, ensure_ascii=False)
+
+
+class RAGRecommender(LangChainRAG):
+    """
+    Recommender engine that uses RAG (Retrieval-Augmented Generation) to provide recommendations.
+    Uses embedding vectors from store/embeddings/ to find and rank recommendations
+    without needing an external LLM API.
+    """
+    def __init__(self, model: str = "scratch-model", engine_name: str = "default"):
+        super().__init__(api_key=None, model=model)
+        self.engine_name = engine_name
+        self._embedding_store = None
+        self.prompt_template = self.load_prompt_template()
+
+    def load_prompt_template(self) -> str:
+        configs = Configs.from_engine_name(self.engine_name)
+        return configs.prompt_path_resolved.read_text(encoding="utf-8")
+
+    def generate_llm_prompt(self, result: dict[str, Any], llminput: dict[str, Any] | None = None) -> str:
+        import json
+
+        configs = Configs.from_engine_name(self.engine_name)
+        payload = dict(load_default_llminput(configs))
+        if llminput:
+            payload.update(llminput)
+        payload["llm_chat"] = result_to_text(result)
+
+        template = self.prompt_template
+        skip_keys = frozenset({"user_profile_columns", "item_catalog_columns"})
+        for key, value in payload.items():
+            if key in skip_keys:
+                continue
+            if isinstance(value, (dict, list)):
+                replacement = json.dumps(value, indent=2, ensure_ascii=False)
+            else:
+                replacement = str(value) if value is not None else ""
+            template = template.replace("{" + key + "}", replacement)
+        return template
+    
+    def get_provider(self):
+        """Determine the LLM provider based on available API keys."""
+        hf_token = self.api_key or self.get_hf_token()
+        if hf_token:
+            return "huggingface"
+        return "ollama"
+
+    def _get_llm_caller(self) -> BaseLLM:
+        if self.api_key:
+            return GPTCaller(api_key=self.api_key, model=self.model)
+        return FreeLLMCaller(model=self.model, provider="huggingface") # self.get_provider())
+
+    def call_llm(self, prompt: str) -> str:
+        caller = self._get_llm_caller()
+        return caller.call(prompt)
+
+    @property
+    def embedding_store(self):
+        """Lazy load EmbeddingStore."""
+
