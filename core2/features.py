@@ -951,8 +951,7 @@ FEATURES = {
         "item_recency_weight": item_recency_weight,
         "already_purchased_flag": already_purchased_flag,
         "negative_feedback_flag": negative_feedback_flag,
-        "eligible_flag": eligible_flag,
-        "relevance_score": relevance_score,
+        "eligible_flag": eligible_flag
     },
     "user_features": {
         "segment": segment,

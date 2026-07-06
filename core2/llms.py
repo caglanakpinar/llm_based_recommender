@@ -283,7 +283,7 @@ FREE_LLM_REGISTRY: dict[str, type[BaseLLM]] = {
 }
 
 
-def create_free_llm(provider: str, engine_name: str = "default", **kwargs: Any) -> BaseLLM:
+def create_llm(provider: str, engine_name: str = "default", **kwargs: Any) -> BaseLLM:
 	key = str(provider).strip().lower()
 	if key not in FREE_LLM_REGISTRY:
 		available = ", ".join(sorted(FREE_LLM_REGISTRY.keys()))

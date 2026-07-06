@@ -99,9 +99,11 @@ class Configs:
     DEFAULT_LLMINPUT_FILE = "llminput.json"
     DEFAULT_UPLOADS_DIR = "uploads"
     DEFAULT_RECO_PROMPT_FILE = "reco_generator.md"
-    DEFAULT_ITEM_FAISS_INDEX_NAME = "itemdb.index"
-    DEFAULT_USER_FAISS_INDEX_NAME = "userdb.index"
-    DEFAULT_USER_ITEM_FAISS_INDEX_NAME = "useritemdb.index"
+    DEFAULT_CONTEXT_CHROMODB_PATH = "context"
+    DEFAULT_CONTEXT_CHROMODB_NAME = "relevance_knowledge"
+    DEFAULT_CONTEXT_FAISS_NAME = "context.index"
+    DEFAULT_EMBEDDING_MODEL_NAME = "sentence_transformer" # availabe at embeddings.py
+    DEFAULT_LLM_MODEL_NAME = "huggingface"  # available at llms.py
     DEFAULT_ITEM_EMBEDDING_DIMENSION = 384
     DEFAULT_USER_EMBEDDING_DIMENSION = 384
     DEFAULT_USER_ITEM_EMBEDDING_DIMENSION = 384

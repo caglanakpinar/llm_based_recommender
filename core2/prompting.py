@@ -44,7 +44,7 @@ class UserPrompt(Configs):
             self.context = self.context.merge(
                 _feature_df, on=self.user_id, how="left").fillna(0) 
             
-class ItemPPrompt(Configs):
+class ItemPrompt(Configs):
     """ Item prompt generator for vector database operations. """
 
     def __init__(self, engine_name, datasets: DataSets):
@@ -103,11 +103,48 @@ class UserItemPrompt(Configs):
 class RelevanceScorePrompt(Configs):
     """ Relevance score prompt generator for vector database operations. """
 
-    def __init__(self, engine_name, datasets: DataSets):
+    def __init__(self, engine_name, datasets: DataSets, user_prompts: UserPrompt, item_prompts: ItemPrompt, user_item_prompts: UserItemPrompt):
         super().__init__(engine_name)
+        self.user_prompts = user_prompts.context
+        self.item_prompts = item_prompts.context
+        self.user_item_prompts = user_item_prompts.context
+        self.item_users = datasets.item_user
+        self.context = pd.DataFrame()
         self.prompt = BasePrompt(self.relevance_score_prompt_path)
 
-    def generate_relevance_score_prompt(self, user_features: Dict[str, Any], item_features: Dict[str, Any]) -> str:
-        """Generate a relevance score prompt based on user and item features."""
-        args = {**user_features, **item_features}
+    def _prompt_from_row(self, row: pd.Series) -> str:
+        args = {k: v for k, v in row.items() if pd.notnull(v)}
         return self.prompt.load_prompt_template(args)
+
+    def generate_rag_retrieval_context(self) -> pd.DataFrame:
+        self.context = self.context[[self.user_id, self.item_id]].merge(
+            self.user_prompts[[self.user_id, "generated_prompt"]].rename(columns={"generated_prompt": "user_prompt"}),
+            on=self.user_id,
+            how="left"
+        ).rename(columns={"user_prompt": "user_prompt"}).merge(
+            self.item_prompts[[self.item_id, "generated_prompt"]].rename(columns={"generated_prompt": "item_prompt"}),
+            on=self.item_id,
+            how="left"
+        ).rename(columns={"item_prompt": "item_prompt"}).merge(
+            self.user_item_prompts[[self.user_id, self.item_id, "generated_prompt"]].rename(columns={"generated_prompt": "user_item_prompt"}),
+            on=[self.user_id, self.item_id],
+            how="left"
+        ).rename(columns={"user_item_prompt": "user_item_pair_prompt"})
+
+        self.context["generated_prompt"] = self.context.apply(self._prompt_from_row, axis=1)
+
+    def build_relevance_score_prompt(self, user_id: str, item_id: str) -> str:
+        """Build a relevance score prompt for a given user-item pair."""
+        user_row = self.user_prompts[self.user_prompts[self.user_id] == user_id]['generated_prompt'].iloc[0]
+        item_row = self.item_prompts[self.item_prompts[self.item_id] == item_id]['generated_prompt'].iloc[0]
+        user_item_row = self.user_item_prompts[
+            self.user_item_prompts[self.user_id] == user_id & 
+            self.user_item_prompts[self.item_id] == item_id
+        ]['generated_prompt'].iloc[0]
+
+        if user_row.empty or item_row.empty or user_item_row.empty:
+            raise ValueError(f"User or Item or User-Item pair not found for user_id={user_id}, item_id={item_id}")
+
+        args = {**user_row.iloc[0].to_dict(), **item_row.iloc[0].to_dict(), **user_item_row.iloc[0].to_dict()}
+        return self.prompt.load_prompt_template(args)
+    

@@ -5,26 +5,26 @@ import json
 import faiss
 import numpy as np
 import pandas as pd
+import chromadb
 
 from core2.configs import Configs
 from core2.datasets import DataSets
 from core2.features import FEATURES
 from core2.embeddings import create_embedder
+from core2.prompting import BasePrompt
 
 
-class BaseVectorDB(Configs):
+class BaseFaissDB(Configs):
     """Base class for vector database operations."""
 
-    def __init__(self, engine_name: str, datasets: DataSets, dimension: int = 128, metric: str = "L2"):
+    def __init__(self, engine_name: str, dimension: int = 128, metric: str = "L2", prompt: BasePrompt | None = None, embedding_model_name: str = Configs.DEFAULT_EMBEDDING_MODEL_NAME):
         super().__init__(project_name=engine_name)
-        self.prompt: str | None = None
-        self.items = datasets.item
-        self.users = datasets.user
-        self.items_users = datasets.item_user
+        self.prompt: BasePrompt | None = prompt 
         self.dimension = int(dimension)
         self.metric = str(metric).upper()
         self.index = None
-        self.embedder = create_embedder(engine_name, dimension=self.DEFAULT_EMBEDDING_DIMENSION, normalize=True)
+        self.index_path = self.resolve_repo_path(self.DEFAULT_CONTEXT_FAISS_NAME)
+        self.embedder = create_embedder(embedding_model_name, engine_name, dimension=self.DEFAULT_EMBEDDING_DIMENSION, normalize=True)
         self._initialize_index()
 
     def _initialize_index(self):
@@ -50,6 +50,7 @@ class BaseVectorDB(Configs):
         if vectors.ndim == 1:
             vectors = vectors.reshape(1, -1)
         self.index.add(vectors)
+        faiss.write_index(self.index, self.index_path.as_posix())
     
     def search_vectors(self, query_vectors: np.ndarray, k: int = 10) -> tuple:
         """Search for nearest vectors in the FAISS index."""
@@ -60,97 +61,119 @@ class BaseVectorDB(Configs):
         return distances, indices
 
 
-class ItemDB(BaseVectorDB):
-    """Vector database for items."""
+class BaseChromaDB(Configs):
+    """Base class for Chroma vector database operations."""
 
-    def __init__(self, datasets: DataSets):
-        super().__init__(datasets)
-        self.items = datasets.item
-        self.prompt = ""
+    def __init__(
+        self,
+        engine_name: str,
+        dimension: int = 128,
+        collection_name: str = Configs.DEFAULT_CONTEXT_CHROMODB_NAME,
+        prompt: BasePrompt | None = None,
+    ):
+        super().__init__(project_name=engine_name)
+        project_name = engine_name
+        super().__init__(project_name=project_name)
+        self.prompt: BasePrompt | None = prompt
+        self.dimension = int(dimension)
+        self.collection_name = str(collection_name)
+        self._chroma_client = None
+        self._collection = None
+        self.persist_directory = self.resolve_repo_path(Configs.DEFAULT_CONTEXT_CHROMODB_PATH)
+
+    def _get_collection(self):
+        if self._collection is not None:
+            return self._collection
+        self._chroma_client = chromadb.PersistentClient(path=self.persist_directory)
+        self._collection = self._chroma_client.get_or_create_collection(name=self.collection_name)
+        return self._collection
+
+    def write(
+        self,
+        documents: List[str],
+        ids: Optional[List[str]] = None,
+        metadatas: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """Write text documents to the Chroma collection."""
+        if not documents:
+            return
+        collection = self._get_collection()
+        docs = [str(d) for d in documents]
+        doc_ids = ids or [f"doc_{i}" for i in range(len(docs))]
+        collection.upsert(ids=doc_ids, documents=docs, metadatas=metadatas)
     
-    def write(self, vectors: np.ndarray, ids: Optional[List[int]] = None) -> None:
-        """Write item vectors to the database."""
-        self.add_vectors(vectors, ids)
-    
-    def read(self, query_vectors: np.ndarray, k: int = 10) -> tuple:
-        """Search for similar items."""
-        return self.search_vectors(query_vectors, k)
+    def read(self, query_texts: List[str], k: int = 10) -> Dict[str, Any]:
+        """Read/search text documents from the Chroma collection."""
+        collection = self._get_collection()
+        texts = [str(t) for t in query_texts]
+        return collection.query(query_texts=texts, n_results=int(k))
+
+    def update_text(
+        self,
+        ids: List[str],
+        documents: List[str],
+        metadatas: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """Update existing Chroma documents by id."""
+        if not ids or not documents:
+            return
+        collection = self._get_collection()
+        collection.update(ids=[str(i) for i in ids], documents=[str(d) for d in documents], metadatas=metadatas)
 
 
-class UserDB(BaseVectorDB):
-    """Vector database for users."""
+class ContextDB(BaseChromaDB):
+    """Context database for storing and retrieving context documents."""
 
-    def __init__(self, engine_name, datasets: DataSets):
-        super().__init__(engine_name, datasets)
-        self.users = datasets.user
-    
-    def write(self, vectors: np.ndarray, ids: Optional[List[int]] = None) -> None:
-        """Write user vectors to the database."""
-        self.add_vectors(vectors, ids)
-    
-    def read(self, query_vectors: np.ndarray, k: int = 10) -> tuple:
-        """Search for similar users."""
-        return self.search_vectors(query_vectors, k)
+    def __init__(
+        self,
+        engine_name: str,
+        dimension: int = 128,
+        collection_name: str = Configs.DEFAULT_CONTEXT_CHROMODB_NAME,
+        prompt: BasePrompt | None = None,
+    ):
+        super().__init__(
+            engine_name=engine_name,
+            dimension=dimension,
+            collection_name=collection_name,
+            prompt=prompt,
+        )
+        self.context = prompt.context
 
-    def _prompt_from_row(self, row: pd.Series) -> str:
-        user_id = row.get("user_id", "")
-        segment = row.get("segment", "")
-        notes = row.get("notes", "")
-
-        feature_parts = []
-        for name in FEATURES["user_features"].keys():
-            feature_parts.append(f"{name}={row.get(name, '')}")
-
-        return (
-            f"user_id: {user_id}; segment: {segment}; notes: {notes}; "
-            f"features: {'; '.join(feature_parts)}"
+    def write_context(self):
+        self.context['id'] = self.context.apply(
+            lambda row: f"{row[self.user_id]}_{row[self.item_id]}", axis=1
+        )
+        self.write(
+            ids=self.context['id'].astype(str).tolist(),
+            documents=self.context["generated_prompt"].astype(str).tolist(),
+            metadatas=self.context.to_dict(orient="records"),
         )
 
-    def build_user_feature_dataset(self) -> pd.DataFrame:
-        """Build feature rows for unique users from FEATURES['user_features']."""
-        unique_users = self.users.groupby("user_id").first().reset_index()
-        kwargs = {'user_id': self.user_id}
-        user_feature_funcs = FEATURES.get("user_features", {})
-        for feature_name, feature_fn in user_feature_funcs.items():
-            _feature_df = feature_fn(self.users, **kwargs)
-            unique_users = unique_users.merge(_feature_df, on=self.user_id, how="left").fillna(0) 
-            
-        unique_users["generated_prompt"] = unique_users.apply(self._prompt_from_row, axis=1)
-        return unique_users
 
-    def generate_and_store_user_vectors(self) -> pd.DataFrame:
-        """Generate prompts for users, encode vectors, and store in FAISS."""
-        dataset = self.build_user_feature_dataset()
-        if dataset.empty:
-            return dataset
+class ContextVectorDB(BaseFaissDB):
+    """Context vector database for storing and retrieving context vectors."""
 
-        # Keep all metadata in a sidecar records file; FAISS stores vectors only.
-        vectors = self.embedder.text_to_vector(dataset["generated_prompt"].fillna("").astype(str).tolist())
-        dataset["generated_prompt_emb_vectors"] = vectors.tolist()
-        self.write(vectors, ids=dataset["user_id"].tolist() if "user_id" in dataset.columns else None)
+    def __init__(
+        self,
+        engine_name: str,
+        dimension: int = 128,
+        metric: str = "L2",
+        prompt: BasePrompt | None = None,
+    ):
+        super().__init__(
+            engine_name=engine_name,
+            dimension=dimension,
+            metric=metric,
+        )
+        self.context = prompt.context
+        self.embedder = create_embedder(engine_name, dimension=self.dimension, normalize=True)
 
-        # Persist complete dataset rows (user_id, segment, notes, prompt, vectors, and features).
-        self.user_records_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.user_records_path.open("w", encoding="utf-8") as f:
-            json.dump(dataset.to_dict(orient="records"), f, indent=2, ensure_ascii=False)
-
-        return dataset
-    
-
-class ItemUserDB(BaseVectorDB):
-    """Vector database for item-user interactions."""
-    def __init__(self, datasets: DataSets):
-        super().__init__(datasets)
-        self.interactions = datasets.item_user
-
-    def default_prompt(self) -> str:
-        """Return the default prompt template."""
-        return self.configs.prompt_template or "Default prompt template not found."
-    
-    def write(self, vectors: np.ndarray, ids: Optional[List[int]] = None) -> None:
-        """Write item-user interaction vectors to the database."""
-        self.add_vectors(vectors, ids)
-    
-    def read(self, query_vectors: np.ndarray, k: int = 10) -> tuple:
-        """Search for similar item-user interactions."""
-        return self.search_vectors(query_vectors, k)
+    def write_context_vectors(self):
+        self.context['id'] = self.context.apply(
+            lambda row: f"{row[self.user_id]}_{row[self.item_id]}", axis=1
+        )
+        self.context['embedding'] = self.context.apply(
+            lambda row: self.embedder.encode(row['generated_prompt']), axis=1
+        )
+        vectors = np.vstack(self.context["embedding"].values).astype(np.float32)
+        self.add_vectors(vectors=vectors, ids=self.context['id'].astype(str).tolist())
