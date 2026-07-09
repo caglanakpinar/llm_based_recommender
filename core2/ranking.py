@@ -17,11 +17,7 @@ class BaseRanking(Configs):
             context_prompts: RelevanceScorePrompt,
                  
         ):
-        project_name = (
-            engine_name
-            if str(engine_name).endswith(self.ENGINE_SUFFIX)
-            else self.project_name_for(engine_name)
-        )
+        project_name = self.project_name_for(engine_name)
         super().__init__(project_name=project_name)
         self.items = datasets.item
         self.users = datasets.user
@@ -74,12 +70,12 @@ class LLMRanker(Configs):
 
         ):
         super().__init__(engine_name, datasets, context_prompts)
+        self.retrieval = retrieval
         self.llm_model_name = create_llm(llm_model_name, engine_name)
         self.embedder = self.retrieval.embedder._model
-        self.retrieval = retrieval
         self.context_prompts = context_prompts
 
-    def generate_scores(self, user_id, item_id) -> pd.DataFrame:
+    def generate_scores(self, user_id, item_id) -> dict:
         # 1. Generate Query prompts for user-item pairs
         user_query = self.context_prompts.build_relevance_score_prompts(user_id, item_id)
         # 2. Retrieve context documents based on query prompts
@@ -90,6 +86,7 @@ class LLMRanker(Configs):
             f"Question: {user_query}\n"
             f"Answer:"
         )
-        self.embedder.decode(self.llm_model_name.call(rag_prompt)) 
+        score_response = self.llm_model_name.call(rag_prompt)
+        return {"item_id": item_id, "relevance_score": float(score_response) if isinstance(score_response, (int, float)) else 0.0} 
         
 

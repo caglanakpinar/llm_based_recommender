@@ -8,14 +8,16 @@ from core2.embeddings import create_embedder
 from core2.features import FEATURES
 
 
-class BasePrompt:
+class BasePrompt(Configs):
     """Base class for prompt templates used by vector databases."""
-    def __init__(self, prompt_path: str = None):
+    def __init__(self, engine_name: str, prompt_path: str):
+        super().__init__(engine_name)
         self.prompt_path = prompt_path or Configs.DEFAULT_RECO_PROMPT_FILE
         
     def load_prompt_template(self, args: dict[str, str] = None) -> str:
         """Load prompt template text if the configured prompt file exists."""
         prompt_path = self.resolve_repo_path(self.prompt_path)
+        print(prompt_path)
         if prompt_path.exists():
             return prompt_path.read_text(encoding="utf-8").format(**(args or {}))
         return ""
@@ -24,10 +26,10 @@ class BasePrompt:
 class UserPrompt(Configs):
     """ User prompt generator for vector database operations. """
 
-    def __init__(self, engine_name, datasets: DataSets):
+    def __init__(self, engine_name: str, datasets: DataSets):
         super().__init__(engine_name)
         self.users = datasets.user
-        self.prompt = BasePrompt(self.user_prompt_path)
+        self.prompt = BasePrompt(engine_name, self.user_prompt_path)
         self.context = pd.DataFrame()
 
     def _prompt_from_row(self, row: pd.Series) -> str:
@@ -50,16 +52,17 @@ class ItemPrompt(Configs):
     def __init__(self, engine_name, datasets: DataSets):
         super().__init__(engine_name)
         self.items = datasets.item
-        self.prompt = BasePrompt(self.item_prompt_path)
+        self.prompt = BasePrompt(engine_name, self.item_prompt_path)
         self.context = pd.DataFrame()
 
     def _prompt_from_row(self, row: pd.Series) -> str:
         args = {k: v for k, v in row.items() if pd.notnull(v)}
+        print(args)
         return self.prompt.load_prompt_template(args)   
 
     def build_item_feature_dataset(self) -> pd.DataFrame:
         """Build feature rows for unique items from FEATURES['item_features']."""
-        self.context = self.items.groupby(self.item_id).first().reset_index()
+        self.context = self.items.groupby(self.item_id).first().reset_index().iloc[:1]
         kwargs = {'user_id': self.user_id}
         user_feature_funcs = FEATURES.get("item_features", {})
         for feature_name, feature_fn in user_feature_funcs.items():
@@ -80,7 +83,7 @@ class UserItemPrompt(Configs):
         ):
         super().__init__(engine_name)
         self.user_item = datasets.item_user
-        self.prompt = BasePrompt(self.user_item_pair_prompt_path)
+        self.prompt = BasePrompt(engine_name, self.user_item_pair_prompt_path)
         self.context = pd.DataFrame()
 
     def _prompt_from_row(self, row: pd.Series) -> str:
@@ -110,7 +113,7 @@ class RelevanceScorePrompt(Configs):
         self.user_item_prompts = user_item_prompts.context
         self.item_users = datasets.item_user
         self.context = pd.DataFrame()
-        self.prompt = BasePrompt(self.relevance_score_prompt_path)
+        self.prompt = BasePrompt(engine_name, self.relevance_score_prompt_path)
 
     def _prompt_from_row(self, row: pd.Series) -> str:
         args = {k: v for k, v in row.items() if pd.notnull(v)}

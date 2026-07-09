@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from typing import Any
 
 
 import streamlit as st
 
-from core.logger import logger
+from core2.logger import logger
 from core.configs import Configs
 from schema_defaults import DEFAULT_ITEM_CATALOG_COLUMNS, DEFAULT_USER_PROFILE_COLUMNS
 from reco_engine import (
@@ -32,11 +33,24 @@ from reco_engine import (
     save_uploaded_parquet_files,
 )
 
+from core2.datasets import DataSets
+from core2.prompting import (
+    RelevanceScorePrompt, 
+    UserPrompt, 
+    ItemPrompt, 
+    UserItemPrompt
+)
+from core2.dbs import ContextVectorDB, ContextDB
+from core2.ranking import LLMRanker
+from core2.retrieval import Retrieval
+from core2.reco_engine import BuildRecoEngine
+
 st.set_page_config(
     page_title="LLM Recommender",
     page_icon="🎯",
     layout="wide",
 )
+
 
 
 HUGGINGFACE_API_TOKEN = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_TOKEN") or ""
@@ -656,7 +670,7 @@ def _builder_page() -> None:
         st.caption("Filled `recommender_prompt.md` — generated after you build the engine.")
 
         submitted = st.form_submit_button(
-            "Generate embedding store" if not is_edit else "Regenerate embedding store",
+            "Generate Recommender Engine" if not is_edit else "Regenerate Recommender Engine",
             type="primary",
             use_container_width=True,
         )
@@ -697,7 +711,7 @@ def _builder_page() -> None:
                 llm_chat=llm_chat,
             )
 
-            with st.spinner("Building embeddings (items, users, prompt chunks)…"):
+            with st.spinner("Building Recommender Engine"):
                 build_engine(
                     engine_name,
                     llminput,
@@ -705,18 +719,67 @@ def _builder_page() -> None:
                     users_parquet_folder=active_users,
                     items_parquet_folder=active_items,
                 )
-            with st.spinner("Building Initial RAG Model"):
-                from core.rag import LangChainRAG
-                rag_model = _get_hf_model_for_provider(
-                    st.session_state.get("openai_model", "gpt-4o-mini")
+            with st.spinner("Reading datasets, ready built engine, and generating prompt"):
+                try:
+                    datasets = DataSets(engine_name)
+                    datasets.get_data()
+                except Exception as exc:
+                    st.error(f"Error reading datasets: {exc}")  
+
+            with st.spinner("Generating rendered prompt, item, user, and context prompts"):
+                item_prompts = ItemPrompt(engine_name, datasets)
+                item_prompts.build_item_feature_dataset()
+                print(f"[DEBUG] Item Prompt sample: {str(item_prompts.context['generated_prompt'].iloc[0])[:200]}...")
+                
+                user_prompts = UserPrompt(engine_name, datasets)
+                user_prompts.build_user_feature_dataset()
+                print(f"[DEBUG] User Prompt sample: {str(user_prompts.context['generated_prompt'].iloc[0])[:200]}...")
+                
+                user_item_prompts = UserItemPrompt(engine_name, datasets)
+                user_item_prompts.build_user_item_feature_dataset()
+                print(f"[DEBUG] User-Item Prompt sample: {str(user_item_prompts.context['generated_prompt'].iloc[0])[:200]}...")
+                
+                context_prompts = RelevanceScorePrompt(
+                    engine_name, datasets, item_prompts, user_prompts, user_item_prompts)
+                context_prompts.generate_rag_retrieval_context()
+                print(f"[DEBUG] Context/Relevance Prompt sample: {str(context_prompts.context['generated_prompt'].iloc[0])[:200]}...")
+            
+            with st.spinner("Generating Contextual DB and Vector DB"):
+                try:
+                    context_vector_db = ContextVectorDB(engine_name, datasets, context_prompts)
+                    context_vector_db.build_vector_db()
+                except Exception as exc:
+                    st.error(f"Error building Context Vector DB: {exc}")
+
+                try:
+                    context_db2 = ContextDB(engine_name, datasets, context_prompts)
+                    context_db2.build_context_db()
+                except Exception as exc:
+                    st.error(f"Error building Context DB: {exc}")   
+
+            with st.spinner("Generating Contextual Retrieval engine"):
+                retrieve = Retrieval(engine_name, datasets, context_prompts, context_vector_db, context_db2)
+
+            with st.spinner("Generating Relevance Ranking engine with LLM Response"):
+                ranker = LLMRanker(engine_name, datasets, retrieve, context_prompts)
+
+            with st.spinner("Generating RAG engine with LLM Response"):
+                eng = BuildRecoEngine(engine_name, datasets, retrieve, ranker, context_prompts)
+                # Start KServe engine in a separate thread to avoid blocking Streamlit
+                engine_thread = threading.Thread(
+                    target=eng.reco_engine_serve,
+                    daemon=True,
+                    name=f"kserve-{engine_name}"
                 )
-                rag = LangChainRAG(
-                    index_dir=Configs.current_dir / "embeddings", 
-                    llm_model=rag_model,
-                    api_key=st.session_state.get("huggingface_api_key", HUGGINGFACE_API_TOKEN),
-                )
-                rag._build_llm()
-                st.success("Initial RAG Model built successfully")
+                engine_thread.start()
+                print(f"[DEBUG] KServe engine thread started for '{engine_name}'")
+                
+                # Cache the predictor in session state for direct access if KServe server unavailable
+                if "kserve_predictors" not in st.session_state:
+                    st.session_state["kserve_predictors"] = {}
+                predictor = eng.initialize_kserve_api()
+                st.session_state["kserve_predictors"][engine_name] = predictor
+                print(f"[DEBUG] KServe predictor cached in session state for '{engine_name}'")
 
             st.session_state.selected_engine = engine_name
             st.session_state.edit_engine = None
@@ -828,7 +891,7 @@ def _generator_page() -> None:
             "constraints": run_constraints,
             "llm_chat": run_llm_chat,
         }
-        store = get_engine_store(engine_name)
+
         try:
             if not target_user_id:
                 logger.error("Generator validation failed: target user missing")
@@ -863,60 +926,46 @@ def _generator_page() -> None:
                 len(run_llminput.get("other_users_interactions") or []),
             )
 
-            with st.spinner("Preparing prompt…"):
-                logger.info("Generating prompt embeddings for run")
-                session = store.generate_prompt_embeddings(
-                    llminput_overrides=overrides,
-                    base_llminput=base_llminput,
-                    save_session=True,
-                )
-            prompt = session["rendered_prompt"]
-            # Enhance prompt with target user information
-            prompt = _enhance_prompt_with_target_user(prompt, str(target_user_id))
-            st.session_state.last_prompt = prompt
-            logger.info(f"Prompt generated for engine '{engine_name}' and user '{target_user_id}'.")
-
-            with st.expander("Prompt sent to LLM", expanded=False):
-                st.code(prompt, language="markdown")
-
-            api_key = st.session_state.get("openai_api_key", "").strip()
-            hf_key = st.session_state.get("huggingface_api_key", "").strip()
-            # Fallback to environment variable if not in UI
-            if not hf_key:
-                hf_key = HUGGINGFACE_API_TOKEN
-            if not api_key and not hf_key:
-                logger.error("No API key available for generator run")
-                st.error("❌ No API key available. Please add OpenAI or HuggingFace API key in the sidebar.")
-
             raw: dict[str, Any] | str | None = None
-            with st.spinner("Calling LLM…"):
+            with st.spinner("Calling KServe recommendation API…"):
                 try:
-                    logger.info("About to import LangChainRAG")
-                    from core.rag import LangChainRAG
-                    logger.info("LangChainRAG import successful")
-                    logger.info(
-                        "Initializing LangChainRAG (index_dir=%s, model=%s)",
-                        store.embeddings_dir,
-                        "microsoft/Phi-3-mini-4k-instruct",
-                    )
-                    logger.info("Using HuggingFace API key: %s", "****" if hf_key else "None", store.embeddings_dir)
-                    rag = LangChainRAG(
-                        index_dir=store.embeddings_dir,
-                        llm_model="microsoft/Phi-3-mini-4k-instruct",
-                        api_key=hf_key,
-                    )
-                    raw = rag.answer(prompt, top_k=int(run_top_k))
-                    logger.info("RAG answer returned (type=%s)", type(raw).__name__)
-                    if isinstance(raw, dict):
-                        answer_text = str(raw.get("answer", ""))
-                    else:
-                        answer_text = str(raw)
-                    rag.add_chat_history("user", prompt)
-                    rag.add_chat_history("assistant", answer_text)
+                    logger.info("Calling KServe API for engine '%s' with user_id '%s'", engine_name, target_user_id)
+                    
+                    # Build API request for KServe predictor
+                    api_request = {
+                        "user_id": str(target_user_id),
+                        "top_k": int(run_top_k)
+                    }
+                    
+                    # Call the KServe predictor via HTTP API
+                    import requests
+                    try:
+                        # Try to call the KServe server (default port 8080)
+                        api_url = f"http://localhost:8080/v1/models/{engine_name}:predict"
+                        logger.info(f"Calling KServe endpoint: {api_url}")
+                        response = requests.post(api_url, json=api_request, timeout=30)
+                        response.raise_for_status()
+                        raw = response.json()
+                        logger.info("KServe API call succeeded")
+                    except requests.exceptions.ConnectionError:
+                        # Fallback: call predictor directly if server not available
+                        logger.warning("KServe server not responding, using direct predictor call")
+                        st.warning("⚠️ KServe server not available, using direct predictor (may be slower)")
+                        # Store the predictor in session state during builder, retrieve it here
+                        if "kserve_predictors" in st.session_state and engine_name in st.session_state["kserve_predictors"]:
+                            predictor = st.session_state["kserve_predictors"][engine_name]
+                            raw = predictor.predict(api_request)
+                        else:
+                            raise RuntimeError(
+                                f"KServe server not available and no cached predictor for '{engine_name}'. "
+                                "Ensure the engine was built successfully and the server is running."
+                            )
+                    
                     st.session_state.last_response = raw
+                    
                 except Exception as e:
-                    logger.exception("LLM call failed in generator flow")
-                    st.error(f"LLM call failed: {str(e)}")
+                    logger.exception("KServe API call failed in generator flow")
+                    st.error(f"KServe API call failed: {str(e)}")
                     st.exception(e)
 
                 if raw is not None:

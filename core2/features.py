@@ -290,17 +290,32 @@ def days_since_last_item_interaction(data: pd.DataFrame, **kwargs: Any) -> pd.Da
     return _group_feature(data, "days_since_last_item_interaction", [item_col], lambda g: _days_since_latest(_timestamps(g)))
 
 
+def lookback_window_days(data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
+    """Return the lookback window days feature per item from pre-calculated data or parameter."""
+    item_col = _item_id_col(kwargs)
+    
+    def _calc(g: pd.DataFrame) -> float:
+        if "lookback_days" in g.columns:
+            return _mean_or_zero(_to_numeric(g["lookback_days"]))
+        lookback_window = int(kwargs.get("lookback_window_days", 30))
+        return float(lookback_window)
+    
+    return _group_feature(data, "lookback_window_days", [item_col], _calc)
+
+
 def recent_trend_score(data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
     item_col = _item_id_col(kwargs)
-    lookback_days = int(kwargs.get("lookback_window_days", 30))
 
     def _calc(g: pd.DataFrame) -> float:
         ts = _timestamps(g).dropna()
         if ts.empty:
             return 0.0
+        
+        # Get lookback_days from data if available, otherwise from kwargs
+        lookback_days_val = g["lookback_window_days"]
         now = pd.Timestamp.now(tz="UTC")
         recent = ((now - ts).dt.days <= 7).sum()
-        medium = (((now - ts).dt.days > 7) & ((now - ts).dt.days <= lookback_days)).sum()
+        medium = (((now - ts).dt.days > 7) & ((now - ts).dt.days <= lookback_days_val)).sum()
         return _safe_ratio(float(recent + 0.5 * medium), float(len(ts)))
 
     return _group_feature(data, "recent_trend_score", [item_col], _calc)
@@ -947,6 +962,7 @@ FEATURES = {
         "tag_overlap_score": tag_overlap_score,
         "price_fit_score": price_fit_score,
         "days_since_last_item_interaction": days_since_last_item_interaction,
+        "lookback_window_days": lookback_window_days,
         "recent_trend_score": recent_trend_score,
         "item_recency_weight": item_recency_weight,
         "already_purchased_flag": already_purchased_flag,

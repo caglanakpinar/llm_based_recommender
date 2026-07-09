@@ -1,22 +1,105 @@
 from core2.configs import Configs
-from core2.dbs import Con, ContextDB, ContextVectorDB    
+from core2.dbs import ContextDB, ContextVectorDB
+import numpy as np
+import pandas as pd
 
 
 class Retrieval(Configs):
     """Class for retrieval operations."""  
-    def __init__(self, engine_name: str, context_prompts_db: ContextDB, context_vectors_db: ContextVectorDB):
+    def __init__(self, engine_name: str, datasets, context_prompts, context_vector_db: ContextVectorDB, context_db: ContextDB):
         super().__init__(project_name=engine_name)
-        self.context_prompts_db = context_prompts_db
-        self.context_vectors_db = context_vectors_db
-        self.embedder = context_vectors_db.embedder
+        self.datasets = datasets
+        self.context_prompts = context_prompts
+        self.context_vector_db = context_vector_db
+        self.context_db = context_db
+        self.embedder = context_vector_db.embedder
+        self.user_items = context_db.context if hasattr(context_db, 'context') else pd.DataFrame()
+        self.candidates = self.users_last_interactions() if not self.user_items.empty else {}
+        # Get column names from datasets or use defaults
+        self.user_id_col = 'user_id'
+        self.item_id_col = 'item_id'
 
-    def query(self, query_texts: list[str], k: int = 10) -> tuple:
-        """Query the context database and retrieve relevant documents."""
-        # 1. Embed the query texts into vectors
-        query_vectors = self.embedder.text_to_vector(query_texts)
-        # 2. Search the context vector database for nearest vectors
-        distances, indices = self.context_vectors_db.search_vectors(query_vectors, k=k)
-        # 3. Retrieve the corresponding documents from the context prompts database
-        indices = indices.flatten()
-        retrieved_docs = self.context_prompts_db.read(indices.tolist())
-        return indices, retrieved_docs
+    def users_last_interactions(self) -> dict:
+        """Generate candidates for each user based on their last interactions."""
+        if self.user_items.empty:
+            return {}
+        
+        # Apply query function to get similar items
+        self.user_items['similar_item_id'] = self.user_items.apply(
+            lambda row: self.query(row[self.user_id_col], row[self.item_id_col], k=1), axis=1
+        )
+
+        # Group by user and get their candidates
+        last_interactions = self.user_items.groupby(self.user_id_col)[[self.item_id_col, 'similar_item_id']].agg(list).reset_index()
+        last_interactions = last_interactions.rename(columns={self.item_id_col: 'last_interactions'})
+        
+        # Combine interactions with similar items
+        last_interactions['candidates'] = last_interactions.apply(
+            lambda row: list(set(row['last_interactions'] + (row['similar_item_id'] if isinstance(row['similar_item_id'], list) else [row['similar_item_id']]))), 
+            axis=1
+        )
+        return last_interactions.set_index(self.user_id_col).to_dict(orient='index')
+
+    def retrieve_candidates(self, user_id: str, top_k: int = 10) -> list:
+        """Retrieve candidate items for a given user_id as list of dicts."""
+        if user_id not in self.candidates or not self.candidates[user_id].get('candidates'):
+            return []
+        
+        candidates = self.candidates[user_id]['candidates'][:top_k]
+        # Return list of dicts with item_id
+        return [{"item_id": item_id} for item_id in candidates]
+
+    def retrieve_context(self, query_text: str, k: int = 3) -> str:
+        """Retrieve context documents based on query text."""
+        try:
+            # Encode the query
+            query_vector = self.embedder.encode(query_text)
+            query_vector = np.asarray(query_vector, dtype=np.float32).reshape(1, -1)
+            
+            # Search in context vector DB
+            distances, indices = self.context_vector_db.search_vectors(query_vector, k=k)
+            
+            # Get the actual context documents
+            indices = indices.flatten()
+            if len(indices) > 0 and hasattr(self.context_db, 'context') and not self.context_db.context.empty:
+                context_docs = self.context_db.context.iloc[indices[:k]]
+                # Return concatenated context as string
+                return " ".join([str(doc) for doc in context_docs.values.tolist()])
+            return ""
+        except Exception as e:
+            print(f"Error in retrieve_context: {e}")
+            return ""
+
+    def query(self, user_id: str, item_id: str, k: int = 1) -> list:
+        """Query similar items for a user-item pair."""
+        try:
+            # Try to get the generated prompt for this user-item pair
+            if self.user_items.empty:
+                return []
+            
+            mask = (self.user_items[self.user_id_col] == user_id) & (self.user_items[self.item_id_col] == item_id)
+            matching = self.user_items[mask]
+            
+            if matching.empty or 'generated_prompt' not in matching.columns:
+                return []
+            
+            query_prompt = matching['generated_prompt'].values[0]
+            
+            # 1. Embed the query prompt into a vector
+            query_vector = self.embedder.encode(query_prompt)
+            # 2. Search the context vector database for nearest vectors
+            query_vector = np.asarray(query_vector, dtype=np.float32).reshape(1, -1)
+            distances, indices = self.context_vector_db.search_vectors(query_vector, k=k)
+            
+            # 3. Retrieve the corresponding documents from the context database
+            indices = indices.flatten()
+            if len(indices) > 0 and hasattr(self.context_db, 'context') and not self.context_db.context.empty:
+                try:
+                    retrieved_items = self.context_db.context.iloc[indices].get(self.item_id_col, []).values.tolist()
+                    return retrieved_items
+                except Exception:
+                    return []
+            return []
+        except Exception as e:
+            print(f"Error in query: {e}")
+            return []

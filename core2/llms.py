@@ -30,11 +30,7 @@ class BaseLLM(Configs):
 		temperature: float = 0.2,
 		max_new_tokens: int = 256,
 	) -> None:
-		project_name = (
-			engine_name
-			if str(engine_name).endswith(self.ENGINE_SUFFIX)
-			else self.project_name_for(engine_name)
-		)
+		project_name = self.project_name_for(engine_name)
 		super().__init__(project_name=project_name)
 		self.engine_name = engine_name
 		self.model = model or self.model_name
