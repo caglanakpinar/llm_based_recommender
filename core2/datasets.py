@@ -17,10 +17,7 @@ class DataSets(Configs):
 
     def load_prompt_template(self) -> str:
         """Load prompt template text if the configured prompt file exists."""
-        print("assadasçdaçsdçasdççççç")
-        print(self.prompt_path_resolved)
         if self.prompt_path_resolved.exists():
-            print("assadasçdaçsdçasdççççç")
             return self.prompt_path_resolved.read_text(encoding="utf-8")
         return ""
 

@@ -17,7 +17,7 @@ user_id: {user_id}; segment: {segment}; notes: {notes}
 
 - **Activity features:**
 	- **number of total interactions by {user_id}** is **{num_total_interactions}**
-	- **number of active days for {user_id} in last {lookback_window_days} days** is **{num_active_days}**
+	- **number of active days for {user_id} is **{num_active_days}**
 	- recency of last interaction for {user_id} in days is {days_since_last_interaction}
 
 - **Preference features:**

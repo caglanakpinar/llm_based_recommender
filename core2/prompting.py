@@ -17,7 +17,6 @@ class BasePrompt(Configs):
     def load_prompt_template(self, args: dict[str, str] = None) -> str:
         """Load prompt template text if the configured prompt file exists."""
         prompt_path = self.resolve_repo_path(self.prompt_path)
-        print(prompt_path)
         if prompt_path.exists():
             return prompt_path.read_text(encoding="utf-8").format(**(args or {}))
         return ""
@@ -45,6 +44,9 @@ class UserPrompt(Configs):
             _feature_df = feature_fn(self.users, **kwargs)
             self.context = self.context.merge(
                 _feature_df, on=self.user_id, how="left").fillna(0) 
+
+        self.context["generated_prompt"] = self.context.apply(self._prompt_from_row, axis=1)
+
             
 class ItemPrompt(Configs):
     """ Item prompt generator for vector database operations. """
@@ -57,7 +59,6 @@ class ItemPrompt(Configs):
 
     def _prompt_from_row(self, row: pd.Series) -> str:
         args = {k: v for k, v in row.items() if pd.notnull(v)}
-        print(args)
         return self.prompt.load_prompt_template(args)   
 
     def build_item_feature_dataset(self) -> pd.DataFrame:
@@ -83,18 +84,25 @@ class UserItemPrompt(Configs):
         ):
         super().__init__(engine_name)
         self.user_item = datasets.item_user
+        self.items = datasets.item
+        self.users = datasets.user
         self.prompt = BasePrompt(engine_name, self.user_item_pair_prompt_path)
         self.context = pd.DataFrame()
 
     def _prompt_from_row(self, row: pd.Series) -> str:
         args = {k: v for k, v in row.items() if pd.notnull(v)}
+        print(args)
         return self.prompt.load_prompt_template(args)   
 
     def build_user_item_feature_dataset(self) -> pd.DataFrame:
         """Build feature rows for unique user-item pairs from FEATURES['user_item_features']."""
-        self.context = self.user_item.groupby([self.user_id, self.item_id]).first().reset_index()
+        self.context = self.user_item.groupby([self.user_id, self.item_id]).first().reset_index().merge(
+            self.users, on=self.user_id, how="left"
+        ).merge(
+            self.items, on=self.item_id, how="left"
+        )
         kwargs = {'user_id': self.user_id, 'item_id': self.item_id}
-        user_item_feature_funcs = FEATURES.get("user_item_features", {})
+        user_item_feature_funcs = FEATURES.get("user_item_pair_features", {})
         for feature_name, feature_fn in user_item_feature_funcs.items():
             _feature_df = feature_fn(self.user_item, **kwargs)
             self.context = self.context.merge(
@@ -120,7 +128,7 @@ class RelevanceScorePrompt(Configs):
         return self.prompt.load_prompt_template(args)
 
     def generate_rag_retrieval_context(self) -> pd.DataFrame:
-        self.context = self.context[[self.user_id, self.item_id]].merge(
+        self.context = self.item_users[[self.user_id, self.item_id]].merge(
             self.user_prompts[[self.user_id, "generated_prompt"]].rename(columns={"generated_prompt": "user_prompt"}),
             on=self.user_id,
             how="left"

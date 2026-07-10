@@ -33,7 +33,7 @@ user_id: **{user_id}**; item_id: **{item_id}**; title: {title}
 
 - **Collaborative pair features**:
 	- **number of similar users who interacted with {item_id}** is **{num_similar_users_interacted_item}**
-	- **number of similar users who purchased {item_id}** is **{num_similar_users_purchased_item}**
+	- **number of similar users who purchased {item_id}** is **{num_similar_users_purchased_item_per_user}**
 	- **peer agreement score for {user_id}-{item_id}** is **{peer_agreement_score}**
 
 - **Sequence and session features**:

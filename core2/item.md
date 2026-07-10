@@ -36,4 +36,4 @@ item_id: {item_id}; title: {title}; category: {category}; tags: {tags}; price: {
 - **Risk and exclusion features**:
 	- **target_user already purchased {item_id}: {already_purchased_flag}**
 	- **target_user disliked or removed {item_id}: {negative_feedback_flag}**
-	- **final eligibility of {item_id} for {target_user} is {eligible_flag}**
+	- **final eligibility of {item_id} for {user_id} is {eligible_flag}**
