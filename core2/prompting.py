@@ -1,4 +1,3 @@
-from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
@@ -6,6 +5,8 @@ from core2.configs import Configs
 from core2.datasets import DataSets
 from core2.embeddings import create_embedder
 from core2.features import FEATURES
+
+
 
 
 class BasePrompt(Configs):
@@ -18,7 +19,13 @@ class BasePrompt(Configs):
         """Load prompt template text if the configured prompt file exists."""
         prompt_path = self.resolve_repo_path(self.prompt_path)
         if prompt_path.exists():
-            return prompt_path.read_text(encoding="utf-8").format(**(args or {}))
+            import string
+            template = prompt_path.read_text(encoding="utf-8")
+            # Use safe_substitute-style: fill known keys, leave unknown as empty
+            class _SafeDict(dict):
+                def __missing__(self, key):
+                    return ""
+            return template.format_map(_SafeDict(**(args or {})))
         return ""
 
 
@@ -63,7 +70,7 @@ class ItemPrompt(Configs):
 
     def build_item_feature_dataset(self) -> pd.DataFrame:
         """Build feature rows for unique items from FEATURES['item_features']."""
-        self.context = self.items.groupby(self.item_id).first().reset_index().iloc[:1]
+        self.context = self.items.groupby(self.item_id).first().reset_index()
         kwargs = {'user_id': self.user_id}
         user_feature_funcs = FEATURES.get("item_features", {})
         for feature_name, feature_fn in user_feature_funcs.items():
@@ -91,7 +98,6 @@ class UserItemPrompt(Configs):
 
     def _prompt_from_row(self, row: pd.Series) -> str:
         args = {k: v for k, v in row.items() if pd.notnull(v)}
-        print(args)
         return self.prompt.load_prompt_template(args)   
 
     def build_user_item_feature_dataset(self) -> pd.DataFrame:
@@ -125,22 +131,42 @@ class RelevanceScorePrompt(Configs):
 
     def _prompt_from_row(self, row: pd.Series) -> str:
         args = {k: v for k, v in row.items() if pd.notnull(v)}
+        print(args.keys())
         return self.prompt.load_prompt_template(args)
 
     def generate_rag_retrieval_context(self) -> pd.DataFrame:
-        self.context = self.item_users[[self.user_id, self.item_id]].merge(
-            self.user_prompts[[self.user_id, "generated_prompt"]].rename(columns={"generated_prompt": "user_prompt"}),
+        # Ensure consistent dtypes by converting to string
+        print(self.user_prompts.head())
+        print(self.item_prompts.head())
+        print(self.user_item_prompts.head())
+        item_users_dup = self.item_users.drop_duplicates([self.user_id, self.item_id]).copy()
+        item_users_dup[self.user_id] = item_users_dup[self.user_id].astype(str)
+        item_users_dup[self.item_id] = item_users_dup[self.item_id].astype(str)
+        
+        user_prompts_copy = self.user_prompts.copy()
+        user_prompts_copy[self.user_id] = user_prompts_copy[self.user_id].astype(str)
+        
+        item_prompts_copy = self.item_prompts.copy()
+        item_prompts_copy[self.item_id] = item_prompts_copy[self.item_id].astype(str)
+        
+        user_item_prompts_copy = self.user_item_prompts.copy()
+        user_item_prompts_copy[self.user_id] = user_item_prompts_copy[self.user_id].astype(str)
+        user_item_prompts_copy[self.item_id] = user_item_prompts_copy[self.item_id].astype(str)
+        
+        self.context = item_users_dup.merge(
+            user_prompts_copy[[self.user_id, "generated_prompt"]].rename(columns={"generated_prompt": "user_prompt"}),
             on=self.user_id,
             how="left"
-        ).rename(columns={"user_prompt": "user_prompt"}).merge(
-            self.item_prompts[[self.item_id, "generated_prompt"]].rename(columns={"generated_prompt": "item_prompt"}),
+        ).merge(
+            item_prompts_copy[[self.item_id, "generated_prompt"]].rename(columns={"generated_prompt": "item_prompt"}),
             on=self.item_id,
             how="left"
-        ).rename(columns={"item_prompt": "item_prompt"}).merge(
-            self.user_item_prompts[[self.user_id, self.item_id, "generated_prompt"]].rename(columns={"generated_prompt": "user_item_prompt"}),
+        ).merge(
+            user_item_prompts_copy[[self.user_id, self.item_id, "generated_prompt"]].rename(columns={"generated_prompt": "user_item_prompt"}),
             on=[self.user_id, self.item_id],
             how="left"
-        ).rename(columns={"user_item_prompt": "user_item_pair_prompt"})
+        )
+        print(self.context.head())
 
         self.context["generated_prompt"] = self.context.apply(self._prompt_from_row, axis=1)
 
@@ -149,13 +175,11 @@ class RelevanceScorePrompt(Configs):
         user_row = self.user_prompts[self.user_prompts[self.user_id] == user_id]['generated_prompt'].iloc[0]
         item_row = self.item_prompts[self.item_prompts[self.item_id] == item_id]['generated_prompt'].iloc[0]
         user_item_row = self.user_item_prompts[
-            self.user_item_prompts[self.user_id] == user_id & 
-            self.user_item_prompts[self.item_id] == item_id
+            (self.user_item_prompts[self.user_id] == user_id) & 
+            (self.user_item_prompts[self.item_id] == item_id)
         ]['generated_prompt'].iloc[0]
-
-        if user_row.empty or item_row.empty or user_item_row.empty:
-            raise ValueError(f"User or Item or User-Item pair not found for user_id={user_id}, item_id={item_id}")
-
-        args = {**user_row.iloc[0].to_dict(), **item_row.iloc[0].to_dict(), **user_item_row.iloc[0].to_dict()}
+        args = {"user_prompt": user_row, "item_prompt": item_row, "user_item_prompt": user_item_row}
         return self.prompt.load_prompt_template(args)
+
+
     

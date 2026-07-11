@@ -4,8 +4,10 @@ from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
+import warnings
 
 
+warnings.filterwarnings("ignore", category=UserWarning, module="pandas")
 NEGATIVE_ACTIONS = {"dislike", "remove"}
 POSITIVE_ACTIONS = {"view", "click", "like", "add_to_cart", "purchase", "rate", "share"}
 
