@@ -740,31 +740,31 @@ def _builder_page() -> None:
                 print(f"[DEBUG] User-Item Prompt sample: {str(user_item_prompts.context['generated_prompt'].iloc[0])[:200]}...")
                 
                 context_prompts = RelevanceScorePrompt(
-                    engine_name, datasets, item_prompts, user_prompts, user_item_prompts)
+                    engine_name=engine_name, datasets=datasets, item_prompts=item_prompts, user_prompts=user_prompts, user_item_prompts=user_item_prompts)
                 context_prompts.generate_rag_retrieval_context()
                 print(f"[DEBUG] Context/Relevance Prompt sample: {str(context_prompts.context['generated_prompt'].iloc[0])[:200]}...")
             
             with st.spinner("Generating Contextual DB and Vector DB"):
                 try:
-                    context_vector_db = ContextVectorDB(engine_name, datasets, context_prompts)
+                    context_vector_db = ContextVectorDB(engine_name=engine_name, datasets=datasets, context_prompts=context_prompts)
                     context_vector_db.build_vector_db()
                 except Exception as exc:
                     st.error(f"Error building Context Vector DB: {exc}")
 
                 try:
-                    context_db2 = ContextDB(engine_name, datasets, context_prompts)
+                    context_db2 = ContextDB(engine_name=engine_name, datasets=datasets, context_prompts=context_prompts)
                     context_db2.build_context_db()
                 except Exception as exc:
                     st.error(f"Error building Context DB: {exc}")   
 
             with st.spinner("Generating Contextual Retrieval engine"):
-                retrieve = Retrieval(engine_name, datasets, context_prompts, context_vector_db, context_db2)
+                retrieve = Retrieval(engine_name=engine_name, datasets=datasets, context_prompts=context_prompts, context_vector_db=context_vector_db, context_db=context_db2)
 
             with st.spinner("Generating Relevance Ranking engine with LLM Response"):
-                ranker = LLMRanker(engine_name, datasets, retrieve, context_prompts)
+                ranker = LLMRanker(engine_name=engine_name, datasets=datasets, retrieve=retrieve, context_prompts=context_prompts)
 
             with st.spinner("Generating RAG engine with LLM Response"):
-                eng = BuildRecoEngine(engine_name, datasets, retrieve, ranker, context_prompts)
+                eng = BuildRecoEngine(engine_name=engine_name, datasets=datasets, retrieve=retrieve, ranker=ranker, context_prompts=context_prompts)
                 # Start KServe engine in a separate thread to avoid blocking Streamlit
                 engine_thread = threading.Thread(
                     target=eng.reco_engine_serve,
