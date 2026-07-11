@@ -19,7 +19,7 @@ class BaseFaissDB(Configs):
 
     def __init__(self, engine_name: str, dimension: int = 128, metric: str = "L2", prompt: BasePrompt | None = None, embedding_model_name: str = Configs.DEFAULT_EMBEDDING_MODEL_NAME):
         super().__init__(project_name=engine_name)
-        self.prompt: BasePrompt | None = prompt 
+        self.prompt: BasePrompt | None = prompt
         self.dimension = int(dimension)
         self.metric = str(metric).upper()
         self.index = None
@@ -165,7 +165,7 @@ class ContextVectorDB(BaseFaissDB):
             dimension=dimension,
             metric=metric,
         )
-        self.context = prompt.context
+        self.context = prompt.context_wt_relevance_score
         self.embedder = create_embedder(engine_name, dimension=self.dimension, normalize=True)
 
     def write_context_vectors(self):

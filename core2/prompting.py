@@ -127,6 +127,7 @@ class RelevanceScorePrompt(Configs):
         self.user_item_prompts = user_item_prompts.context
         self.item_users = datasets.item_user
         self.context = pd.DataFrame()
+        self.context_wt_relevance_score = pd.DataFrame()
         self.prompt = BasePrompt(engine_name, self.relevance_score_prompt_path)
 
     def _prompt_from_row(self, row: pd.Series) -> str:
@@ -169,6 +170,19 @@ class RelevanceScorePrompt(Configs):
         print(self.context.head())
 
         self.context["generated_prompt"] = self.context.apply(self._prompt_from_row, axis=1)
+        self.context['relevance_score'] = FEATURES['user_item_features']['relevance_score'](self.context, kwargs={'user_id': self.user_id, 'item_id': self.item_id})
+
+
+    def build_retrieval_context(self) -> pd.DataFrame:
+        db_prompts = []
+        for user_id, item_id, relevance_score in self.user_prompts[[self.user_id, self.item_id, 'relevance_score']].itertuples(index=False):
+            prompt = self.build_relevance_score_prompt()
+            db_prompts.append({
+                self.user_id: user_id,
+                self.item_id: item_id,
+                "generated_prompt": prompt + f"  {str(relevance_score)}"
+            })
+        self.context_wt_relevance_score = pd.DataFrame(db_prompts)
 
     def build_relevance_score_prompt(self, user_id: str, item_id: str) -> str:
         """Build a relevance score prompt for a given user-item pair."""
