@@ -132,14 +132,10 @@ class RelevanceScorePrompt(Configs):
 
     def _prompt_from_row(self, row: pd.Series) -> str:
         args = {k: v for k, v in row.items() if pd.notnull(v)}
-        print(args.keys())
         return self.prompt.load_prompt_template(args)
 
     def generate_rag_retrieval_context(self) -> pd.DataFrame:
         # Ensure consistent dtypes by converting to string
-        print(self.user_prompts.head())
-        print(self.item_prompts.head())
-        print(self.user_item_prompts.head())
         item_users_dup = self.item_users.drop_duplicates([self.user_id, self.item_id]).copy()
         item_users_dup[self.user_id] = item_users_dup[self.user_id].astype(str)
         item_users_dup[self.item_id] = item_users_dup[self.item_id].astype(str)
@@ -167,10 +163,20 @@ class RelevanceScorePrompt(Configs):
             on=[self.user_id, self.item_id],
             how="left"
         )
-        print(self.context.head())
 
         self.context["generated_prompt"] = self.context.apply(self._prompt_from_row, axis=1)
-        self.context['relevance_score'] = FEATURES['user_item_features']['relevance_score'](self.context, kwargs={'user_id': self.user_id, 'item_id': self.item_id})
+        relevance_score_df = (
+            FEATURES
+            ['user_item_pair_features']
+            ['relevance_score']
+            (
+                self.context, 
+                kwargs={'user_id': self.user_id, 'item_id': self.item_id}
+            )
+        )
+        self.context = self.context.merge(
+            relevance_score_df, on=[self.user_id, self.item_id], how="left"
+        )
 
 
     def build_retrieval_context(self) -> pd.DataFrame:
@@ -194,6 +200,4 @@ class RelevanceScorePrompt(Configs):
         ]['generated_prompt'].iloc[0]
         args = {"user_prompt": user_row, "item_prompt": item_row, "user_item_prompt": user_item_row}
         return self.prompt.load_prompt_template(args)
-
-
     

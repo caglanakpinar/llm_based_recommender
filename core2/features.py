@@ -39,10 +39,12 @@ def _normalize_actions(df: pd.DataFrame) -> pd.Series:
 
 
 def _timestamps(df: pd.DataFrame) -> pd.Series:
-    if "timestamp" in df.columns:
-        return pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
-    if "created_at" in df.columns:
-        return pd.to_datetime(df["created_at"], errors="coerce", utc=True)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*could not infer format.*")
+        if "timestamp" in df.columns:
+            return pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
+        if "created_at" in df.columns:
+            return pd.to_datetime(df["created_at"], errors="coerce", utc=True)
     return pd.Series(index=df.index, dtype="datetime64[ns, UTC]")
 
 
