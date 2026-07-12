@@ -24,10 +24,11 @@ class BaseFaissDB(Configs):
         self.metric = str(metric).upper()
         self.index = None
         self.index_path = self.resolve_repo_path(self.DEFAULT_CONTEXT_FAISS_NAME)
+        self.embedding_model_name = embedding_model_name
         self.embedder = create_embedder(
-            name=engine_name, 
-            model_name=embedding_model_name, 
-            dimension=self.DEFAULT_EMBEDDING_DIMENSION, 
+            embedding_model_name,
+            engine_name,
+            model_name=embedding_model_name,
             normalize=True
         )
         self._initialize_index()
@@ -72,6 +73,7 @@ class BaseChromaDB(Configs):
     def __init__(
         self,
         engine_name: str,
+        embedding_name: str,
         dimension: int = 128,
         collection_name: str = Configs.DEFAULT_CONTEXT_CHROMODB_NAME,
         prompt: BasePrompt | None = None,
@@ -138,6 +140,7 @@ class ContextDB(BaseChromaDB):
     ):
         super().__init__(
             engine_name=engine_name,
+            embedding_name=Configs.DEFAULT_EMBEDDING_MODEL_NAME,
             dimension=dimension,
             collection_name=collection_name,
             prompt=prompt,
@@ -167,11 +170,12 @@ class ContextVectorDB(BaseFaissDB):
     ):
         super().__init__(
             engine_name=engine_name,
+            embedding_model_name=Configs.DEFAULT_EMBEDDING_MODEL_NAME,
             dimension=dimension,
             metric=metric,
         )
         self.context = prompt.context_wt_relevance_score
-        self.embedder = create_embedder(name=engine_name, model_name=None, normalize=True, dimension=self.dimension)
+        self.embedder = create_embedder(engine_name=engine_name, name=self.embedding_model_name, model_name=None, normalize=True, dimension=self.dimension)
 
     def write_context_vectors(self):
         self.context['id'] = self.context.apply(

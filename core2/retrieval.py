@@ -30,10 +30,10 @@ class Retrieval(Configs):
         # Group by user and get their candidates
         last_interactions = self.user_items.groupby(self.user_id)[[self.item_id, 'similar_item_id']].agg(list).reset_index()
         last_interactions = last_interactions.rename(columns={self.item_id: 'last_interactions'})
-        
+        print(last_interactions.head())
         # Combine interactions with similar items
         last_interactions['candidates'] = last_interactions.apply(
-            lambda row: list(set(row['last_interactions'] + (row['similar_item_id'] if isinstance(row['similar_item_id'], list) else [row['similar_item_id']]))), 
+            lambda row: list(set(row['last_interactions'] + row['similar_item_id'][0])), 
             axis=1
         )
         return last_interactions.set_index(self.user_id).to_dict(orient='index')
@@ -51,7 +51,7 @@ class Retrieval(Configs):
         """Retrieve context documents based on query text."""
         try:
             # Encode the query
-            query_vector = self.embedder.encode(query_text)
+            query_vector = self.embedder.text_to_vector([query_text])
             query_vector = np.asarray(query_vector, dtype=np.float32).reshape(1, -1)
             
             # Search in context vector DB
@@ -75,7 +75,7 @@ class Retrieval(Configs):
             if self.user_items.empty:
                 return []
             
-            mask = (self.user_items[self.user_id_col] == user_id) & (self.user_items[self.item_id_col] == item_id)
+            mask = (self.user_items[self.user_id] == user_id) & (self.user_items[self.item_id] == item_id)
             matching = self.user_items[mask]
             
             if matching.empty or 'generated_prompt' not in matching.columns:
@@ -84,7 +84,7 @@ class Retrieval(Configs):
             query_prompt = matching['generated_prompt'].values[0]
             
             # 1. Embed the query prompt into a vector
-            query_vector = self.embedder.encode(query_prompt)
+            query_vector = self.embedder.text_to_vector([query_prompt])
             # 2. Search the context vector database for nearest vectors
             query_vector = np.asarray(query_vector, dtype=np.float32).reshape(1, -1)
             distances, indices = self.context_vector_db.search_vectors(query_vector, k=k)
@@ -93,7 +93,7 @@ class Retrieval(Configs):
             indices = indices.flatten()
             if len(indices) > 0 and hasattr(self.context_db, 'context') and not self.context_db.context.empty:
                 try:
-                    retrieved_items = self.context_db.context.iloc[indices].get(self.item_id_col, []).values.tolist()
+                    retrieved_items = self.context_db.context.iloc[indices].get(self.item_id, []).values.tolist()
                     return retrieved_items
                 except Exception:
                     return []

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import hashlib
 from abc import ABC, abstractmethod
 from typing import Any
@@ -79,7 +80,7 @@ class SentenceTransformerEmbedder(BaseEmbedder):
 		from sentence_transformers import SentenceTransformer
 
 		cache_dir = str(Configs.HF_CACHE_DIR / "models")
-		self._model = SentenceTransformer(self.model_name, cache_folder=cache_dir)
+		self._model = SentenceTransformer("BAAI/bge-small-en-v1.5", cache_folder=cache_dir, token=os.getenv("HF_TOKEN"))
 		self._dimension = int(self._model.get_sentence_embedding_dimension())
 
 	@property
@@ -97,7 +98,6 @@ class SentenceTransformerEmbedder(BaseEmbedder):
 		).astype(np.float32)
 		return self._normalize_vectors(vectors)
 
-
 class BGEEmbedder(SentenceTransformerEmbedder):
 	"""BGE preset (`BAAI/bge-small-en-v1.5`).
 
@@ -106,7 +106,7 @@ class BGEEmbedder(SentenceTransformerEmbedder):
 	- recommendation/search pipelines that need good semantic matching
 	"""
 
-	def __init__(self, engine_name: str = "default", *, normalize: bool = True, model_name: str = "BAAI/bge-small-en-v1.5", **kwargs: Any) -> None:
+	def __init__(self, engine_name: str = "default", normalize: bool = True, model_name: str = "BAAI/bge-small-en-v1.5", **kwargs: Any) -> None:
 		super().__init__(engine_name, model_name="BAAI/bge-small-en-v1.5", normalize=normalize)
 
 

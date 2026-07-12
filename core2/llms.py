@@ -53,10 +53,10 @@ class HuggingFaceInferenceLLM(BaseLLM):
 	"""Free-tier Hugging Face Inference API caller."""
 
 	def initialize_model(self) -> None:
-		
 
-		token = self.api_key or os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_TOKEN")
-		self._model_client = InferenceClient(api_key=token)
+		self.model = self.DEFAULT_LLM_HUGGING_FACE_MODEL_NAME
+		self.api_key = self.api_key or os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_TOKEN")
+		self._model_client = InferenceClient(api_key=self.api_key)
 
 	def call(self, prompt: str, **kwargs: Any) -> str:
 		response = self._model_client.text_generation(

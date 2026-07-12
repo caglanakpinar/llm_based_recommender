@@ -190,14 +190,18 @@ class RelevanceScorePrompt(Configs):
             })
         self.context_wt_relevance_score = pd.DataFrame(db_prompts)
 
-    def build_relevance_score_prompt(self, user_id: str, item_id: str) -> str:
+    def build_relevance_score_prompts(self, user_id: str, item_id: str) -> str:
         """Build a relevance score prompt for a given user-item pair."""
-        user_row = self.user_prompts[self.user_prompts[self.user_id] == user_id]['generated_prompt'].iloc[0]
-        item_row = self.item_prompts[self.item_prompts[self.item_id] == item_id]['generated_prompt'].iloc[0]
-        user_item_row = self.user_item_prompts[
-            (self.user_item_prompts[self.user_id] == user_id) & 
+        user_matches = self.user_prompts[self.user_prompts[self.user_id] == user_id]['generated_prompt']
+        user_row = user_matches.iloc[0] if not user_matches.empty else ""
+        item_matches = self.item_prompts[self.item_prompts[self.item_id] == item_id]['generated_prompt']
+        item_row = item_matches.iloc[0] if not item_matches.empty else ""
+        user_item_matches = self.user_item_prompts[
+            (self.user_item_prompts[self.user_id] == user_id) &
             (self.user_item_prompts[self.item_id] == item_id)
-        ]['generated_prompt'].iloc[0]
+        ]['generated_prompt']
+        # No prior interaction between this user and candidate item (e.g. retrieved via similarity, not history).
+        user_item_row = user_item_matches.iloc[0] if not user_item_matches.empty else ""
         args = {"user_prompt": user_row, "item_prompt": item_row, "user_item_prompt": user_item_row}
         return self.prompt.load_prompt_template(args)
     

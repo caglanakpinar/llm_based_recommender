@@ -44,48 +44,40 @@ class RecoEnginePredictor(Model):
         if not user_id:
             return {"error": "user_id is required"}
         
-        try:
-            # 1. Retrieve candidate items from retrieval
-            candidates = self.retrieval.retrieve_candidates(user_id, top_k=top_k * 2)
-            
-            if not candidates or len(candidates) == 0:
-                return {"recommendations": [], "user_id": user_id}
-            
-            # 2. Score each candidate with ranking model
-            scored_items = []
-            for candidate in candidates:
-                item_id = candidate.get("item_id")
-                if not item_id:
-                    continue
-                
-                # Generate relevance score for user-item pair
-                try:
-                    score_result = self.ranker.generate_scores(user_id, item_id)
-                    score = score_result.get("relevance_score", 0.0) if isinstance(score_result, dict) else 0.0
-                except Exception as e:
-                    print(f"[DEBUG] Scoring error for item {item_id}: {str(e)}")
-                    score = 0.0
-                
-                scored_items.append({
-                    "item_id": item_id,
-                    "title": candidate.get("title", ""),
-                    "category": candidate.get("category", ""),
-                    "score": float(score),
-                    "signals": candidate.get("signals", [])
-                })
-            
-            # 3. Sort by score and return top_k
-            ranked = sorted(scored_items, key=lambda x: x["score"], reverse=True)[:top_k]
-            
-            return {
-                "user_id": user_id,
-                "recommendations": ranked,
-                "total_scored": len(scored_items),
-                "returned": len(ranked)
-            }
+        # 1. Retrieve candidate items from retrieval
+        candidates = self.retrieval.retrieve_candidates(user_id, top_k=top_k * 2)
         
-        except Exception as e:
-            return {"error": str(e), "user_id": user_id}
+        if not candidates or len(candidates) == 0:
+            return {"recommendations": [], "user_id": user_id}
+        
+        # 2. Score each candidate with ranking model
+        scored_items = []
+        for candidate in candidates:
+            item_id = candidate.get("item_id")
+            if not item_id:
+                continue
+            
+            # Generate relevance score for user-item pair
+            score_result = self.ranker.generate_scores(user_id, item_id)
+            score = score_result.get("relevance_score", 0.0) if isinstance(score_result, dict) else 0.0
+            
+            scored_items.append({
+                "item_id": item_id,
+                "title": candidate.get("title", ""),
+                "category": candidate.get("category", ""),
+                "score": float(score),
+                "signals": candidate.get("signals", [])
+            })
+        
+        # 3. Sort by score and return top_k
+        ranked = sorted(scored_items, key=lambda x: x["score"], reverse=True)[:top_k]
+        
+        return {
+            "user_id": user_id,
+            "recommendations": ranked,
+            "total_scored": len(scored_items),
+            "returned": len(ranked)
+        }
 
 
 class BuildRecoEngine(Configs):

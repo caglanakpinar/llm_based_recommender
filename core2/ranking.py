@@ -69,7 +69,7 @@ class LLMRanker(Configs):
             llm_model_name: str = Configs.DEFAULT_LLM_MODEL_NAME
 
         ):
-        super().__init__(engine_name, datasets, context_prompts)
+        super().__init__(engine_name)
         self.retrieval = retrieval
         self.llm_model_name = create_llm(llm_model_name, engine_name)
         self.embedder = self.retrieval.embedder._model

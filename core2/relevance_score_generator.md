@@ -39,7 +39,7 @@ It does the following:
 
 ## 4. {user_id} - {item_id} pair
 
-{user_item_pair_prompy}
+{user_item_prompt}
 
 ## 5. Relevance Score
 
