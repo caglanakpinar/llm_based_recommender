@@ -25,9 +25,9 @@ class BaseEmbedder(Configs, ABC):
 	def __init__(
 		self,
 		engine_name: str = "default",
-		*,
 		model_name: str | None = None,
 		normalize: bool = True,
+		**kwargs: Any
 	) -> None:
 		super().__init__(self.project_name_for(engine_name))
 		Configs.configure_hf_environment()
@@ -71,9 +71,9 @@ class SentenceTransformerEmbedder(BaseEmbedder):
 	def __init__(
 		self,
 		engine_name: str = "default",
-		*,
 		model_name: str = "BAAI/bge-small-en-v1.5",
 		normalize: bool = True,
+		**kwargs: Any
 	) -> None:
 		super().__init__(engine_name, model_name=model_name, normalize=normalize)
 		from sentence_transformers import SentenceTransformer
@@ -106,7 +106,7 @@ class BGEEmbedder(SentenceTransformerEmbedder):
 	- recommendation/search pipelines that need good semantic matching
 	"""
 
-	def __init__(self, engine_name: str = "default", *, normalize: bool = True) -> None:
+	def __init__(self, engine_name: str = "default", *, normalize: bool = True, model_name: str = "BAAI/bge-small-en-v1.5", **kwargs: Any) -> None:
 		super().__init__(engine_name, model_name="BAAI/bge-small-en-v1.5", normalize=normalize)
 
 
@@ -118,7 +118,7 @@ class E5Embedder(SentenceTransformerEmbedder):
 	- setups that may later adopt explicit `query:` / `passage:` formatting
 	"""
 
-	def __init__(self, engine_name: str = "default", *, normalize: bool = True) -> None:
+	def __init__(self, engine_name: str = "default", model_name: str = "intfloat/e5-small-v2", normalize: bool = True, **kwargs: Any) -> None:
 		super().__init__(engine_name, model_name="intfloat/e5-small-v2", normalize=normalize)
 
 
@@ -130,7 +130,7 @@ class GTEEmbedder(SentenceTransformerEmbedder):
 	- balanced latency/quality when BGE or E5 are not preferred
 	"""
 
-	def __init__(self, engine_name: str = "default", *, normalize: bool = True) -> None:
+	def __init__(self, engine_name: str = "default", model_name: str = "thenlper/gte-small", normalize: bool = True, **kwargs: Any) -> None:
 		super().__init__(engine_name, model_name="thenlper/gte-small", normalize=normalize)
 
 
@@ -151,17 +151,16 @@ class HuggingFaceMeanPoolEmbedder(BaseEmbedder):
 	def __init__(
 		self,
 		engine_name: str = "default",
-		*,
 		model_name: str = "BAAI/bge-small-en-v1.5",
 		normalize: bool = True,
-		max_length: int = 512,
+		**kwargs: Any,
 	) -> None:
 		super().__init__(engine_name, model_name=model_name, normalize=normalize)
 		import torch
 		from transformers import AutoModel, AutoTokenizer
 
 		self._torch = torch
-		self._max_length = max_length
+		self._max_length = kwargs.get("max_length", 512)
 		cache_dir = str(Configs.HF_CACHE_DIR / "models")
 		self._tokenizer = AutoTokenizer.from_pretrained(self.model_name, cache_dir=cache_dir)
 		self._model = AutoModel.from_pretrained(self.model_name, cache_dir=cache_dir)
@@ -211,12 +210,11 @@ class HashingEmbedder(BaseEmbedder):
 	def __init__(
 		self,
 		engine_name: str = "default",
-		*,
-		dimension: int = 384,
 		normalize: bool = True,
+		**kwargs: Any
 	) -> None:
 		super().__init__(engine_name, model_name="hashing-embedder", normalize=normalize)
-		self._dimension = int(dimension)
+		self._dimension = int(kwargs.get("dimension", 384))
 
 	@property
 	def dimension(self) -> int:
@@ -268,4 +266,3 @@ def create_embedder(name: str, engine_name: str = "default", **kwargs: Any) -> B
 def describe_embedders() -> dict[str, str]:
 	"""Return short human-readable descriptions for available embedders."""
 	return dict(EMBEDDER_DESCRIPTIONS)
-

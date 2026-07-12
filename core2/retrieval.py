@@ -16,8 +16,6 @@ class Retrieval(Configs):
         self.user_items = context_db.context if hasattr(context_db, 'context') else pd.DataFrame()
         self.candidates = self.users_last_interactions() if not self.user_items.empty else {}
         # Get column names from datasets or use defaults
-        self.user_id_col = 'user_id'
-        self.item_id_col = 'item_id'
 
     def users_last_interactions(self) -> dict:
         """Generate candidates for each user based on their last interactions."""
@@ -26,19 +24,19 @@ class Retrieval(Configs):
         
         # Apply query function to get similar items
         self.user_items['similar_item_id'] = self.user_items.apply(
-            lambda row: self.query(row[self.user_id_col], row[self.item_id_col], k=1), axis=1
+            lambda row: self.query(row[self.user_id], row[self.item_id], k=1), axis=1
         )
 
         # Group by user and get their candidates
-        last_interactions = self.user_items.groupby(self.user_id_col)[[self.item_id_col, 'similar_item_id']].agg(list).reset_index()
-        last_interactions = last_interactions.rename(columns={self.item_id_col: 'last_interactions'})
+        last_interactions = self.user_items.groupby(self.user_id)[[self.item_id, 'similar_item_id']].agg(list).reset_index()
+        last_interactions = last_interactions.rename(columns={self.item_id: 'last_interactions'})
         
         # Combine interactions with similar items
         last_interactions['candidates'] = last_interactions.apply(
             lambda row: list(set(row['last_interactions'] + (row['similar_item_id'] if isinstance(row['similar_item_id'], list) else [row['similar_item_id']]))), 
             axis=1
         )
-        return last_interactions.set_index(self.user_id_col).to_dict(orient='index')
+        return last_interactions.set_index(self.user_id).to_dict(orient='index')
 
     def retrieve_candidates(self, user_id: str, top_k: int = 10) -> list:
         """Retrieve candidate items for a given user_id as list of dicts."""

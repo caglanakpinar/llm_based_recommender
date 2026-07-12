@@ -24,7 +24,12 @@ class BaseFaissDB(Configs):
         self.metric = str(metric).upper()
         self.index = None
         self.index_path = self.resolve_repo_path(self.DEFAULT_CONTEXT_FAISS_NAME)
-        self.embedder = create_embedder(embedding_model_name, engine_name, dimension=self.DEFAULT_EMBEDDING_DIMENSION, normalize=True)
+        self.embedder = create_embedder(
+            name=engine_name, 
+            model_name=embedding_model_name, 
+            dimension=self.DEFAULT_EMBEDDING_DIMENSION, 
+            normalize=True
+        )
         self._initialize_index()
 
     def _initialize_index(self):
@@ -166,7 +171,7 @@ class ContextVectorDB(BaseFaissDB):
             metric=metric,
         )
         self.context = prompt.context_wt_relevance_score
-        self.embedder = create_embedder(engine_name, dimension=self.dimension, normalize=True)
+        self.embedder = create_embedder(name=engine_name, model_name=None, normalize=True, dimension=self.dimension)
 
     def write_context_vectors(self):
         self.context['id'] = self.context.apply(
