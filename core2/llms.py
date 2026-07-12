@@ -56,17 +56,18 @@ class HuggingFaceInferenceLLM(BaseLLM):
 
 		self.model = self.DEFAULT_LLM_HUGGING_FACE_MODEL_NAME
 		self.api_key = self.api_key or os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_TOKEN")
-		self._model_client = InferenceClient(api_key=self.api_key)
+		# meta-llama/Llama-3.2-1B-Instruct is only live on featherless-ai; auto provider
+		# selection skips providers not explicitly enabled on the account, so pin it.
+		self._model_client = InferenceClient(api_key=self.api_key, provider="featherless-ai")
 
 	def call(self, prompt: str, **kwargs: Any) -> str:
-		response = self._model_client.text_generation(
-			prompt=str(prompt),
+		response = self._model_client.chat_completion(
+			messages=[{"role": "user", "content": str(prompt)}],
 			model=self.model,
-			max_new_tokens=int(kwargs.get("max_new_tokens", self.max_new_tokens)),
+			max_tokens=int(kwargs.get("max_new_tokens", self.max_new_tokens)),
 			temperature=float(kwargs.get("temperature", self.temperature)),
-			do_sample=bool(kwargs.get("do_sample", True)),
 		)
-		return str(response or "").strip()
+		return str(response.choices[0].message.content or "").strip()
 
 
 class OllamaLLM(BaseLLM):
