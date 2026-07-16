@@ -68,4 +68,8 @@ If item-level and category-level evidence conflict, prioritize evidence specific
 
 Based on the information above, generate a score of how likely {user_id} - {item_id} pair is good match.
 
-Return ONLY valid score:
+Output format rules (must follow exactly):
+- Return ONLY a single floating-point number between 0 and 1 (e.g. 0.73).
+- Do NOT include any explanation, reasoning, labels, units, or extra text.
+- Do NOT use markdown, bullet points, or full sentences.
+- Your entire response must be parseable by `float(response)`.

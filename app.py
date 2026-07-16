@@ -746,16 +746,16 @@ def _builder_page() -> None:
             
             with st.spinner("Generating Contextual DB and Vector DB"):
                 try:
-                    context_vector_db = ContextVectorDB(engine_name=engine_name, datasets=datasets, context_prompts=context_prompts)
-                    context_vector_db.build_vector_db()
+                    context_vector_db = ContextVectorDB(engine_name=engine_name, prompt=context_prompts)
+                    context_vector_db.write_context_vectors()
                 except Exception as exc:
                     st.error(f"Error building Context Vector DB: {exc}")
 
                 try:
-                    context_db2 = ContextDB(engine_name=engine_name, datasets=datasets, context_prompts=context_prompts)
-                    context_db2.build_context_db()
+                    context_db2 = ContextDB(engine_name=engine_name, prompt=context_prompts)
+                    context_db2.write_context()
                 except Exception as exc:
-                    st.error(f"Error building Context DB: {exc}")   
+                    st.error(f"Error building Context DB: {exc}")
 
             with st.spinner("Generating Contextual Retrieval engine"):
                 retrieve = Retrieval(engine_name=engine_name, datasets=datasets, context_prompts=context_prompts, context_vector_db=context_vector_db, context_db=context_db2)

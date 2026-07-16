@@ -182,7 +182,7 @@ class ContextVectorDB(BaseFaissDB):
             lambda row: f"{row[self.user_id]}_{row[self.item_id]}", axis=1
         )
         self.context['embedding'] = self.context.apply(
-            lambda row: self.embedder.encode(row['generated_prompt']), axis=1
+            lambda row: self.embedder.embed_one(row['generated_prompt']), axis=1
         )
         vectors = np.vstack(self.context["embedding"].values).astype(np.float32)
         self.add_vectors(vectors=vectors, ids=self.context['id'].astype(str).tolist())

@@ -67,6 +67,7 @@ class HuggingFaceInferenceLLM(BaseLLM):
 			max_tokens=int(kwargs.get("max_new_tokens", self.max_new_tokens)),
 			temperature=float(kwargs.get("temperature", self.temperature)),
 		)
+		print(f"HF Inference API response: {response}")
 		return str(response.choices[0].message.content or "").strip()
 
 

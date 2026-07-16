@@ -1,3 +1,5 @@
+import re
+
 import pandas as pd
 
 from core2.configs import Configs
@@ -87,6 +89,14 @@ class LLMRanker(Configs):
             f"Answer:"
         )
         score_response = self.llm_model_name.call(rag_prompt)
-        return {"item_id": item_id, "relevance_score": float(score_response) if isinstance(score_response, (int, float)) else 0.0} 
-        
+        print(f"User: {user_id}, Item: {item_id}, Score Response: {score_response}")
+        return {"item_id": item_id, "relevance_score": self._parse_score(score_response)}
+
+    @staticmethod
+    def _parse_score(score_response) -> float:
+        if isinstance(score_response, (int, float)):
+            return float(score_response)
+        match = re.search(r"-?\d*\.?\d+", str(score_response))
+        return float(match.group()) if match else 0.0
+
 
