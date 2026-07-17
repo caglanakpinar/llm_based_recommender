@@ -10,6 +10,6 @@ if command -v deactivate >/dev/null 2>&1; then
   deactivate 2>/dev/null || true
 fi
 
-poetry env use python3.13 2>/dev/null || poetry env use /opt/homebrew/bin/python3.13
+poetry env use python3.11 2>/dev/null || poetry env use /usr/local/bin/python3.11
 poetry install
 exec poetry run streamlit run app.py "$@"

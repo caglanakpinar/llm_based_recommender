@@ -4,8 +4,10 @@ from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
+import warnings
 
 
+warnings.filterwarnings("ignore", category=UserWarning, module="pandas")
 NEGATIVE_ACTIONS = {"dislike", "remove"}
 POSITIVE_ACTIONS = {"view", "click", "like", "add_to_cart", "purchase", "rate", "share"}
 
@@ -37,10 +39,12 @@ def _normalize_actions(df: pd.DataFrame) -> pd.Series:
 
 
 def _timestamps(df: pd.DataFrame) -> pd.Series:
-    if "timestamp" in df.columns:
-        return pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
-    if "created_at" in df.columns:
-        return pd.to_datetime(df["created_at"], errors="coerce", utc=True)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*could not infer format.*")
+        if "timestamp" in df.columns:
+            return pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
+        if "created_at" in df.columns:
+            return pd.to_datetime(df["created_at"], errors="coerce", utc=True)
     return pd.Series(index=df.index, dtype="datetime64[ns, UTC]")
 
 
@@ -224,6 +228,23 @@ def num_similar_users_purchased_item(data: pd.DataFrame, **kwargs: Any) -> pd.Da
 
     return _group_feature(data, "num_similar_users_purchased_item", [item_col], _calc)
 
+def num_similar_users_purchased_item_per_user(data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
+    item_col = _item_id_col(kwargs)
+    user_col = _user_id_col(kwargs)
+
+    def _calc(g: pd.DataFrame) -> float:
+        actions = _normalize_actions(g)
+        purchased = actions == "purchase"
+        if "is_similar_user" in g.columns:
+            similar = _to_numeric(g["is_similar_user"]).fillna(0) > 0
+        else:
+            similar = pd.Series(True, index=g.index)
+        if user_col in g.columns:
+            return float(g.loc[purchased & similar, user_col].nunique(dropna=True))
+        return float((purchased & similar).sum())
+
+    return _group_feature(data, "num_similar_users_purchased_item_per_user", [user_col, item_col], _calc)
+
 
 def avg_similarity_users_item(data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
     item_col = _item_id_col(kwargs)
@@ -290,17 +311,32 @@ def days_since_last_item_interaction(data: pd.DataFrame, **kwargs: Any) -> pd.Da
     return _group_feature(data, "days_since_last_item_interaction", [item_col], lambda g: _days_since_latest(_timestamps(g)))
 
 
+def lookback_window_days(data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
+    """Return the lookback window days feature per item from pre-calculated data or parameter."""
+    item_col = _item_id_col(kwargs)
+    
+    def _calc(g: pd.DataFrame) -> float:
+        if "lookback_days" in g.columns:
+            return _mean_or_zero(_to_numeric(g["lookback_days"]))
+        lookback_window = int(kwargs.get("lookback_window_days", 30))
+        return float(lookback_window)
+    
+    return _group_feature(data, "lookback_window_days", [item_col], _calc)
+
+
 def recent_trend_score(data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
     item_col = _item_id_col(kwargs)
-    lookback_days = int(kwargs.get("lookback_window_days", 30))
 
     def _calc(g: pd.DataFrame) -> float:
         ts = _timestamps(g).dropna()
         if ts.empty:
             return 0.0
+        
+        # Get lookback_days from data if available, otherwise from kwargs
+        lookback_days_val = g["lookback_window_days"]
         now = pd.Timestamp.now(tz="UTC")
         recent = ((now - ts).dt.days <= 7).sum()
-        medium = (((now - ts).dt.days > 7) & ((now - ts).dt.days <= lookback_days)).sum()
+        medium = (((now - ts).dt.days > 7) & ((now - ts).dt.days <= lookback_days_val)).sum()
         return _safe_ratio(float(recent + 0.5 * medium), float(len(ts)))
 
     return _group_feature(data, "recent_trend_score", [item_col], _calc)
@@ -389,11 +425,19 @@ def relevance_score(data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
     ]
 
     for fn in model_feature_funcs:
-        fdf = fn(df, **kwargs)
-        feature_cols = [c for c in fdf.columns if c not in group_cols]
-        if len(feature_cols) != 1:
+        try:
+            fdf = fn(df, **kwargs)
+            feature_cols = [c for c in fdf.columns if c not in group_cols]
+            if len(feature_cols) != 1:
+                continue
+            # Check that all merge keys exist in the feature dataframe
+            missing_cols = [col for col in group_cols if col not in fdf.columns]
+            if missing_cols:
+                continue
+            pair_df = pair_df.merge(fdf, on=group_cols, how="left")
+        except Exception:
+            # Skip features that fail to compute
             continue
-        pair_df = pair_df.merge(fdf, on=group_cols, how="left")
 
     numeric_cols = [
         c for c in pair_df.columns
@@ -470,7 +514,53 @@ def relevance_score(data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
 
 def segment(data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
     user_col = _user_id_col(kwargs)
-    return _group_feature(data, "segment", [user_col], lambda g: _mode_as_str(_series_or_empty(g, "segment")))
+
+    def _calc(g: pd.DataFrame) -> str:
+        # If segment already provided in data, use it
+        if "segment" in g.columns:
+            existing = _mode_as_str(_series_or_empty(g, "segment"))
+            if existing:
+                return existing
+
+        # RFM-based segmentation
+        now = pd.Timestamp.now(tz="UTC")
+        ts = _timestamps(g).dropna()
+
+        # Recency: days since last interaction
+        recency = float((now - ts.max()).total_seconds() / 86400.0) if not ts.empty else 999.0
+
+        # Frequency: number of interactions
+        frequency = float(len(g))
+
+        # Monetary: average purchase price or purchase count as proxy
+        actions = _normalize_actions(g)
+        if "price" in g.columns:
+            monetary = _mean_or_zero(_to_numeric(g.loc[actions == "purchase", "price"]))
+        else:
+            monetary = float((actions == "purchase").sum())
+
+        # Score each dimension (1=low, 3=high)
+        r_score = 3 if recency <= 7 else (2 if recency <= 30 else 1)
+        f_score = 3 if frequency >= 10 else (2 if frequency >= 3 else 1)
+        m_score = 3 if monetary >= 100 else (2 if monetary >= 10 else 1)
+        rfm = r_score + f_score + m_score
+
+        if rfm >= 8:
+            return "champions"
+        elif rfm >= 6:
+            return "loyal"
+        elif r_score >= 2 and f_score >= 2:
+            return "potential_loyalist"
+        elif r_score == 3 and f_score == 1:
+            return "new_customer"
+        elif r_score <= 1 and f_score >= 2:
+            return "at_risk"
+        elif r_score == 1 and f_score == 1:
+            return "lost"
+        else:
+            return "occasional"
+
+    return _group_feature(data, "segment", [user_col], _calc)
 
 
 def profile_completeness_score(data: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
@@ -947,15 +1037,14 @@ FEATURES = {
         "tag_overlap_score": tag_overlap_score,
         "price_fit_score": price_fit_score,
         "days_since_last_item_interaction": days_since_last_item_interaction,
+        "lookback_window_days": lookback_window_days,
         "recent_trend_score": recent_trend_score,
         "item_recency_weight": item_recency_weight,
         "already_purchased_flag": already_purchased_flag,
         "negative_feedback_flag": negative_feedback_flag,
-        "eligible_flag": eligible_flag,
-        "relevance_score": relevance_score,
+        "eligible_flag": eligible_flag
     },
     "user_features": {
-        "segment": segment,
         "profile_completeness_score": profile_completeness_score,
         "profile_age_days": profile_age_days,
         "num_total_interactions": num_total_interactions,
@@ -994,7 +1083,7 @@ FEATURES = {
         "item_conversion_rate": item_conversion_rate,
         "pair_novelty_score": pair_novelty_score,
         "num_similar_users_interacted_item": num_similar_users_interacted_item,
-        "num_similar_users_purchased_item": num_similar_users_purchased_item,
+        "num_similar_users_purchased_item_per_user": num_similar_users_purchased_item_per_user,
         "peer_agreement_score": peer_agreement_score,
         "next_item_probability": next_item_probability,
         "session_cooccurrence_score": session_cooccurrence_score,

@@ -11,7 +11,7 @@ from typing import Any
 
 import yaml
 
-from core.logger import logger
+from core2.logger import logger
 
 
 @dataclass
@@ -25,7 +25,6 @@ class Configs:
     """Configuration for one reco engine project folder (e.g. test_reco_engine/)."""
 
     current_dir = Path(os.path.abspath(__file__)).parent.parent
-    ENGINE_SUFFIX = "_reco_engine"
     HF_CACHE_DIR = current_dir / ".cache" / "huggingface"
     HF_HUB_CACHE_DIR = HF_CACHE_DIR / "hub"
     HF_TRANSFORMERS_CACHE_DIR = HF_CACHE_DIR / "transformers"
@@ -99,9 +98,15 @@ class Configs:
     DEFAULT_LLMINPUT_FILE = "llminput.json"
     DEFAULT_UPLOADS_DIR = "uploads"
     DEFAULT_RECO_PROMPT_FILE = "reco_generator.md"
-    DEFAULT_ITEM_FAISS_INDEX_NAME = "itemdb.index"
-    DEFAULT_USER_FAISS_INDEX_NAME = "userdb.index"
-    DEFAULT_USER_ITEM_FAISS_INDEX_NAME = "useritemdb.index"
+    DEFAULT_CONTEXT_CHROMODB_PATH = "context"
+    DEFAULT_CONTEXT_CHROMODB_NAME = "relevance_knowledge"
+    DEFAULT_CONTEXT_FAISS_NAME = "context.index"
+    DEFAULT_EMBEDDING_MODEL_NAME = "sentence_transformer" # availabe at embeddings.py
+    DEFAULT_LLM_MODEL_NAME = "google"  # available at llms.py
+    DEFAULT_LLM_HUGGING_FACE_MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"  # available at llms.py
+    DEFAULT_LLM_GOOGLE_MODEL_NAME = "gemini-3.5-flash"  # lowest-cost Gemini Flash tier
+    DEFAULT_GEMINI_TEMPERATURE = 0.7
+    DEFAULT_GEMINI_MAX_TOKENS = 1000
     DEFAULT_ITEM_EMBEDDING_DIMENSION = 384
     DEFAULT_USER_EMBEDDING_DIMENSION = 384
     DEFAULT_USER_ITEM_EMBEDDING_DIMENSION = 384
@@ -158,7 +163,9 @@ class Configs:
             self._read_from_config_yaml()
         else:
             self._apply_defaults()
-        self._setup_embedding_paths()
+        self._setup_embedding_paths() 
+        self.user_id = self.user_profile_columns.get("user_id")
+        self.item_id = self.item_catalog_columns.get("item_id")
 
     @classmethod
     def from_engine_name(cls, engine_name: str) -> Configs:
@@ -182,12 +189,10 @@ class Configs:
 
     @classmethod
     def project_name_for(cls, engine_name: str) -> str:
-        return f"{engine_name.strip()}{cls.ENGINE_SUFFIX}"
+        return engine_name.strip()
 
     @classmethod
     def short_name_from_project(cls, project_name: str) -> str:
-        if project_name.endswith(cls.ENGINE_SUFFIX):
-            return project_name[: -len(cls.ENGINE_SUFFIX)]
         return project_name
 
     @classmethod
@@ -196,10 +201,10 @@ class Configs:
         root = root or cls.current_dir
         names: list[str] = []
         for path in sorted(root.iterdir()):
-            if not path.is_dir() or not path.name.endswith(cls.ENGINE_SUFFIX):
+            if not path.is_dir():
                 continue
             if (path / "docs" / "configs.yaml").is_file():
-                names.append(cls.short_name_from_project(path.name))
+                names.append(path.name)
         return names
 
     @classmethod
@@ -220,7 +225,6 @@ class Configs:
                 setattr(configs, key, value)
         configs.created_at = datetime.now(timezone.utc).isoformat()
         configs.save()
-        configs._setup_embedding_paths()
         dest.mkdir(parents=True, exist_ok=True)
         configs.docs_path.mkdir(parents=True, exist_ok=True)
         (dest / "data").mkdir(parents=True, exist_ok=True)
@@ -240,6 +244,7 @@ class Configs:
         self.resource_path = self.current_dir / "resource"
         self.model_artifacts_path = self.engine_root / "model_artifacts"
         self.evaluate_path = self.engine_root / "evaluates"
+        self.data_path = self.engine_root / "data"
 
     def _apply_defaults(self) -> None:
         self.reco_engine_name = getattr(self, "reco_engine_name", self._short_name(self.project_name))
@@ -279,7 +284,6 @@ class Configs:
         self.users_parquet_folder = None
         self.items_parquet_folder = None
         self.llm_chat = ""
-        self.user_id = None
         self.num_items = 0
         self.num_users = 0
         self.created_at = None
@@ -308,10 +312,10 @@ class Configs:
         self.session_dir = self.engine_root / self.session_dir_rel
         self.llminput_path = self.engine_root / self.llminput_file
         self.uploads_path = self.engine_root / self.uploads_dir_rel
-        self.relevance_score_prompt_path = self.resolve_repo_path("relevance_score_generator.md")
-        self.user_item_pair_prompt_path = self.resolve_repo_path("user_item_pair.md")
-        self.item_prompt_path = self.resolve_repo_path("item.md")
-        self.user_prompt_path = self.resolve_repo_path("user.md")
+        self.relevance_score_prompt_path = self.resolve_repo_path("core2/relevance_score_generator.md")
+        self.user_item_pair_prompt_path = self.resolve_repo_path("core2/user_item_pair.md")
+        self.item_prompt_path = self.resolve_repo_path("core2/item.md")
+        self.user_prompt_path = self.resolve_repo_path("core2/user.md")
 
     def resolve_repo_path(self, relative: str | Path) -> Path:
         path = Path(relative)
@@ -336,32 +340,9 @@ class Configs:
                 f"Expected root of YAML file '{self.config_file_path}' to be a dictionary, "
                 f"got {type(config).__name__}"
             )
-
         self._apply_defaults()
         for key, value in config.items():
-            if key == "datasets":
-                self.datasets = {}
-                for name, args in (value or {}).items():
-                    if not isinstance(args, dict):
-                        logger.warning(
-                            "Skipping invalid dataset config for '%s'.", name
-                        )
-                        continue
-                    file_path = args.get("file")
-                    from_type = args.get("_from")
-                    arguments = args.get("arguments", {})
-                    if file_path is None or from_type is None:
-                        raise ValueError(
-                            f"Dataset '{name}' requires 'file' and '_from' keys."
-                        )
-                    self.datasets[name] = DataSetConfigs(
-                        file=Path(file_path),
-                        _from=from_type,
-                        arguments=arguments if isinstance(arguments, dict) else {},
-                    )
-            elif key in self._YAML_KEYS:
-                setattr(self, key, value)
-            else:
+            if key in self._YAML_KEYS:
                 setattr(self, key, value)
 
         if self.interactions_parquet_folder is None and self.parquet_folder:

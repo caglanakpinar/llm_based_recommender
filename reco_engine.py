@@ -534,7 +534,6 @@ def build_engine(
         items_parquet_folder,
     )
 
-    store = EmbeddingStore(configs)
     items = llminput["item_catalog"]
     users_df = load_parquet_users(users_parquet_folder)
     profiles = extract_user_profiles(
@@ -542,40 +541,18 @@ def build_engine(
     )
     all_user_records = collect_all_user_records(profiles, interactions_parquet_folder)
 
-    item_vectors = store.build_item_embeddings(items)
-    user_vectors = store.build_user_embeddings_from_records(all_user_records)
-    default_records, default_vectors = store.build_default_prompt_embeddings(llminput)
     rendered = render_prompt(llminput, configs)
 
-    store.save(
-        items,
-        item_vectors,
-        all_user_records,
-        user_vectors,
-        default_records,
-        default_vectors,
-        llminput,
-        rendered,
-    )
 
     with configs.llminput_path.open("w", encoding="utf-8") as f:
         json.dump(llminput, f, indent=2, ensure_ascii=False)
 
     configs.num_items = len(items)
     configs.num_users = len(all_user_records)
-    configs.user_id = profile.get("user_id")
     configs.interactions_parquet_folder = str(Path(interactions_parquet_folder).resolve())
     configs.users_parquet_folder = str(Path(users_parquet_folder).resolve())
     configs.items_parquet_folder = str(Path(items_parquet_folder).resolve())
     configs.save()
-
-    # Save rendered prompt to engine folder
-    engine_prompt_path = configs.engine_root / "rendered_prompt.md"
-    engine_prompt_path.write_text(rendered, encoding="utf-8")
-    print(f"✓ Saved rendered prompt → {engine_prompt_path}")
-
-    return store
-
 
 def get_engine_store(name: str) -> EmbeddingStore:
     return EmbeddingStore(get_engine_configs(name))

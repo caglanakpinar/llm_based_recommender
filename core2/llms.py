@@ -9,6 +9,8 @@ from urllib import request
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 from huggingface_hub import InferenceClient
+from google import genai
+from google.genai import types as genai_types
 
 from core2.configs import Configs
 
@@ -30,11 +32,7 @@ class BaseLLM(Configs):
 		temperature: float = 0.2,
 		max_new_tokens: int = 256,
 	) -> None:
-		project_name = (
-			engine_name
-			if str(engine_name).endswith(self.ENGINE_SUFFIX)
-			else self.project_name_for(engine_name)
-		)
+		project_name = self.project_name_for(engine_name)
 		super().__init__(project_name=project_name)
 		self.engine_name = engine_name
 		self.model = model or self.model_name
@@ -57,20 +55,22 @@ class HuggingFaceInferenceLLM(BaseLLM):
 	"""Free-tier Hugging Face Inference API caller."""
 
 	def initialize_model(self) -> None:
-		
 
-		token = self.api_key or os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_TOKEN")
-		self._model_client = InferenceClient(api_key=token)
+		self.model = self.DEFAULT_LLM_HUGGING_FACE_MODEL_NAME
+		self.api_key = self.api_key or os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_TOKEN")
+		# meta-llama/Llama-3.2-1B-Instruct is only live on featherless-ai; auto provider
+		# selection skips providers not explicitly enabled on the account, so pin it.
+		self._model_client = InferenceClient(api_key=self.api_key, provider="featherless-ai")
 
 	def call(self, prompt: str, **kwargs: Any) -> str:
-		response = self._model_client.text_generation(
-			prompt=str(prompt),
+		response = self._model_client.chat_completion(
+			messages=[{"role": "user", "content": str(prompt)}],
 			model=self.model,
-			max_new_tokens=int(kwargs.get("max_new_tokens", self.max_new_tokens)),
+			max_tokens=int(kwargs.get("max_new_tokens", self.max_new_tokens)),
 			temperature=float(kwargs.get("temperature", self.temperature)),
-			do_sample=bool(kwargs.get("do_sample", True)),
 		)
-		return str(response or "").strip()
+		print(f"HF Inference API response: {response}")
+		return str(response.choices[0].message.content or "").strip()
 
 
 class OllamaLLM(BaseLLM):
@@ -111,6 +111,31 @@ class OllamaLLM(BaseLLM):
 		with request.urlopen(req, timeout=int(kwargs.get("timeout", 120))) as resp:
 			body = json.loads(resp.read().decode("utf-8"))
 		return str(body.get("response", "")).strip()
+
+
+class GoogleGeminiLLM(BaseLLM):
+	"""Google Gemini caller via the google-genai SDK."""
+
+	def initialize_model(self) -> None:
+		self.model = self.DEFAULT_LLM_GOOGLE_MODEL_NAME
+		self.api_key = self.api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+		if not self.api_key:
+			raise ValueError("GoogleGeminiLLM requires GOOGLE_API_KEY (or GEMINI_API_KEY) to be set")
+		self._model_client = genai.Client(api_key=self.api_key)
+		self.temperature = float(self.DEFAULT_GEMINI_TEMPERATURE) if self.temperature is None else float(self.temperature)
+		self.model = self.model or self.DEFAULT_LLM_GOOGLE_MODEL_NAME
+		self.max_output_tokens = int(self.max_new_tokens) if self.max_new_tokens is not None else int(self.DEFAULT_GEMINI_MAX_TOKENS)
+
+	def call(self, prompt: str, **kwargs: Any) -> str:
+		response = self._model_client.models.generate_content(
+			model=self.model,
+			contents=str(prompt),
+			config=genai_types.GenerateContentConfig(
+				temperature=self.temperature,
+				max_output_tokens=self.max_output_tokens,
+			),
+		)
+		return str(response.text or "").strip()
 
 
 class TransformersLocalLLM(BaseLLM):
@@ -267,6 +292,7 @@ class Qwen25HalfBLocalLLM(GPT2CausalLocalLLM):
 
 
 FREE_LLM_REGISTRY: dict[str, type[BaseLLM]] = {
+	"google": GoogleGeminiLLM,
 	"huggingface": HuggingFaceInferenceLLM,
 	"ollama": OllamaLLM,
 	"transformers_local": TransformersLocalLLM,
@@ -283,7 +309,7 @@ FREE_LLM_REGISTRY: dict[str, type[BaseLLM]] = {
 }
 
 
-def create_free_llm(provider: str, engine_name: str = "default", **kwargs: Any) -> BaseLLM:
+def create_llm(provider: str, engine_name: str = "default", **kwargs: Any) -> BaseLLM:
 	key = str(provider).strip().lower()
 	if key not in FREE_LLM_REGISTRY:
 		available = ", ".join(sorted(FREE_LLM_REGISTRY.keys()))
