@@ -58,7 +58,7 @@ class DataSets(Configs):
             df = pd.read_parquet(parquet_file)
             dfs.append(df)
         
-        return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+        return pd.concat(dfs, ignore_index=True).iloc[:1000] if dfs else pd.DataFrame()
 
     def get_data(self) -> dict[str, pd.DataFrame]:
         """Read engine parquet datasets and assign item/user/item_user attributes."""

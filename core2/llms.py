@@ -9,6 +9,8 @@ from urllib import request
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 from huggingface_hub import InferenceClient
+from google import genai
+from google.genai import types as genai_types
 
 from core2.configs import Configs
 
@@ -109,6 +111,31 @@ class OllamaLLM(BaseLLM):
 		with request.urlopen(req, timeout=int(kwargs.get("timeout", 120))) as resp:
 			body = json.loads(resp.read().decode("utf-8"))
 		return str(body.get("response", "")).strip()
+
+
+class GoogleGeminiLLM(BaseLLM):
+	"""Google Gemini caller via the google-genai SDK."""
+
+	def initialize_model(self) -> None:
+		self.model = self.DEFAULT_LLM_GOOGLE_MODEL_NAME
+		self.api_key = self.api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+		if not self.api_key:
+			raise ValueError("GoogleGeminiLLM requires GOOGLE_API_KEY (or GEMINI_API_KEY) to be set")
+		self._model_client = genai.Client(api_key=self.api_key)
+		self.temperature = float(self.DEFAULT_GEMINI_TEMPERATURE) if self.temperature is None else float(self.temperature)
+		self.model = self.model or self.DEFAULT_LLM_GOOGLE_MODEL_NAME
+		self.max_output_tokens = int(self.max_new_tokens) if self.max_new_tokens is not None else int(self.DEFAULT_GEMINI_MAX_TOKENS)
+
+	def call(self, prompt: str, **kwargs: Any) -> str:
+		response = self._model_client.models.generate_content(
+			model=self.model,
+			contents=str(prompt),
+			config=genai_types.GenerateContentConfig(
+				temperature=self.temperature,
+				max_output_tokens=self.max_output_tokens,
+			),
+		)
+		return str(response.text or "").strip()
 
 
 class TransformersLocalLLM(BaseLLM):
@@ -265,6 +292,7 @@ class Qwen25HalfBLocalLLM(GPT2CausalLocalLLM):
 
 
 FREE_LLM_REGISTRY: dict[str, type[BaseLLM]] = {
+	"google": GoogleGeminiLLM,
 	"huggingface": HuggingFaceInferenceLLM,
 	"ollama": OllamaLLM,
 	"transformers_local": TransformersLocalLLM,

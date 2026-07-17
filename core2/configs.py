@@ -102,8 +102,11 @@ class Configs:
     DEFAULT_CONTEXT_CHROMODB_NAME = "relevance_knowledge"
     DEFAULT_CONTEXT_FAISS_NAME = "context.index"
     DEFAULT_EMBEDDING_MODEL_NAME = "sentence_transformer" # availabe at embeddings.py
-    DEFAULT_LLM_MODEL_NAME = "huggingface"  # available at llms.py
+    DEFAULT_LLM_MODEL_NAME = "google"  # available at llms.py
     DEFAULT_LLM_HUGGING_FACE_MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"  # available at llms.py
+    DEFAULT_LLM_GOOGLE_MODEL_NAME = "gemini-3.5-flash"  # lowest-cost Gemini Flash tier
+    DEFAULT_GEMINI_TEMPERATURE = 0.7
+    DEFAULT_GEMINI_MAX_TOKENS = 1000
     DEFAULT_ITEM_EMBEDDING_DIMENSION = 384
     DEFAULT_USER_EMBEDDING_DIMENSION = 384
     DEFAULT_USER_ITEM_EMBEDDING_DIMENSION = 384

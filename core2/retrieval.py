@@ -82,22 +82,35 @@ class Retrieval(Configs):
                 return []
             
             query_prompt = matching['generated_prompt'].values[0]
-            
+
             # 1. Embed the query prompt into a vector
             query_vector = self.embedder.text_to_vector([query_prompt])
-            # 2. Search the context vector database for nearest vectors
             query_vector = np.asarray(query_vector, dtype=np.float32).reshape(1, -1)
-            distances, indices = self.context_vector_db.search_vectors(query_vector, k=k)
-            
-            # 3. Retrieve the corresponding documents from the context database
-            indices = indices.flatten()
-            if len(indices) > 0 and hasattr(self.context_db, 'context') and not self.context_db.context.empty:
-                try:
-                    retrieved_items = self.context_db.context.iloc[indices].get(self.item_id, []).values.tolist()
-                    return retrieved_items
-                except Exception:
-                    return []
-            return []
+
+            if not hasattr(self.context_db, 'context') or self.context_db.context.empty:
+                return []
+            total_vectors = len(self.context_db.context)
+
+            # 2. Search the context vector database for nearest vectors.
+            # The query prompt is itself indexed, and rows for the same item_id
+            # (from other users) tend to embed close together too, so a small
+            # buffer often isn't enough to find a differing item; expand the
+            # search until we find k distinct other items or exhaust the index.
+            search_k = min(k + 1, total_vectors)
+            retrieved_items: list = []
+            while True:
+                distances, indices = self.context_vector_db.search_vectors(query_vector, k=search_k)
+                indices = [i for i in indices.flatten() if 0 <= i < total_vectors]
+                if indices:
+                    candidates = self.context_db.context.iloc[indices]
+                    retrieved_items = candidates.loc[
+                        candidates[self.item_id] != item_id, self.item_id
+                    ].drop_duplicates().values.tolist()[:k]
+                if retrieved_items or search_k >= total_vectors:
+                    break
+                search_k = min(search_k * 2, total_vectors)
+
+            return retrieved_items
         except Exception as e:
             print(f"Error in query: {e}")
             return []

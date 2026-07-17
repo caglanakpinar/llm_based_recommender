@@ -177,6 +177,7 @@ class RelevanceScorePrompt(Configs):
         self.context = self.context.merge(
             relevance_score_df, on=[self.user_id, self.item_id], how="left"
         )
+        self.context_wt_relevance_score = self.context.copy()
 
 
     def build_retrieval_context(self) -> pd.DataFrame:
