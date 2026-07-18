@@ -207,6 +207,47 @@ predictor = eng.initialize_kserve_api()
 response = predictor.predict({"user_id": "user_00004", "top_k": 5})
 ```
 
+## Benchmark
+
+An offline ranking benchmark lives under [`benchmark/`](benchmark/) — see its
+[README](benchmark/README.md) for the full protocol. In short: a temporal split
+(most-recent 30% of each user's interactions held out), strong-positive actions
+(`purchase`/`add_to_cart`/`like`) as ground truth, and every engine ranking the
+**same** candidate pool per user (relevant items + 20 sampled negatives), scored
+with NDCG / MAP / MRR / Precision / Recall / HitRate `@k`.
+
+### Results (2026-07-17 run)
+
+Setup: 100 sampled users, candidate pool of 2,380 pairs (380 positives), baselines
+fit on the full-population training split (140K interactions), `seed=42`.
+
+| Engine | NDCG@10 | MAP@10 | MRR |
+|---|---|---|---|
+| Item-KNN CF | **0.2781** | **0.1512** | **0.3190** |
+| Random | 0.2710 | 0.1440 | 0.3177 |
+| Popularity | 0.2444 | 0.1292 | 0.3092 |
+| LLM engine (`core2`) | *pending* | *pending* | *pending* |
+
+- **LLM head-to-head is incomplete**: the scoring run (25 users, 601 pairs via a
+  local Ollama model) was interrupted at 100/601 pairs. Scores are cached in
+  `benchmark/results/llm_score_cache.json`, so re-running resumes where it left off:
+
+  ```bash
+  poetry run python -m benchmark.run_benchmark --n-users 100 --n-negatives 20
+  ```
+
+- **Interpreting the numbers**: the bundled `data/` is synthetically generated
+  (random interactions), so there is little real collaborative/semantic signal to
+  learn — all engines land near the random floor (Item-KNN edges it out only
+  slightly). This is a property of the sample data, not the harness; point
+  `benchmark/data_prep.py` at real interaction logs (same schema) for a meaningful
+  comparison.
+
+A second, config-driven workflow (`benchmark/run_config.py` + `benchmark/leaderboard.py`)
+compares ranker variants — LLM (embedder × provider × temperature), a neural
+two-tower, and GBDT rankers — on the same shared pool; no leaderboard results have
+been generated yet.
+
 ## Config files
 
 `Configs` persists/loads YAML at **`<engine_root>/docs/configs.yaml`**, where

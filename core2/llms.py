@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 from urllib import request
+
+import anthropic
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 from huggingface_hub import InferenceClient
@@ -136,6 +138,37 @@ class GoogleGeminiLLM(BaseLLM):
 			),
 		)
 		return str(response.text or "").strip()
+
+
+class ClaudeLLM(BaseLLM):
+	"""Anthropic Claude caller via the official ``anthropic`` SDK.
+
+	Reads the API key from ``CLAUDE_KEY`` (falling back to ``ANTHROPIC_API_KEY``)
+	and defaults to the model named in ``DEFAULT_LLM_CLAUDE_MODEL_NAME``.
+	"""
+
+	def initialize_model(self) -> None:
+		# BaseLLM seeds self.model with the embedding default; swap in the Claude default.
+		if not self.model or self.model == self.DEFAULT_MODEL_NAME:
+			self.model = self.DEFAULT_LLM_CLAUDE_MODEL_NAME
+		self.api_key = self.api_key or os.getenv("CLAUDE_KEY") or os.getenv("ANTHROPIC_API_KEY")
+		if not self.api_key:
+			raise ValueError("ClaudeLLM requires CLAUDE_KEY (or ANTHROPIC_API_KEY) to be set")
+		self._model_client = anthropic.Anthropic(api_key=self.api_key)
+		self.temperature = float(self.DEFAULT_LLM_CLAUDE_TEMPERATURE) if self.temperature is None else float(self.temperature)
+		self.max_output_tokens = int(self.max_new_tokens) if self.max_new_tokens is not None else int(self.DEFAULT_LLM_CLAUDE_MAX_TOKENS)
+		self.model = self.model or self.DEFAULT_LLM_CLAUDE_MODEL_NAME
+
+	def call(self, prompt: str, **kwargs: Any) -> str:
+		response = self._model_client.messages.create(
+			model=self.model,
+			max_tokens=self.max_output_tokens,
+			temperature=self.temperature,
+			messages=[{"role": "user", "content": str(prompt)}],
+		)
+		return "".join(
+			block.text for block in response.content if block.type == "text"
+		).strip()
 
 
 class TransformersLocalLLM(BaseLLM):
@@ -293,6 +326,8 @@ class Qwen25HalfBLocalLLM(GPT2CausalLocalLLM):
 
 FREE_LLM_REGISTRY: dict[str, type[BaseLLM]] = {
 	"google": GoogleGeminiLLM,
+	"claude": ClaudeLLM,
+	"anthropic": ClaudeLLM,
 	"huggingface": HuggingFaceInferenceLLM,
 	"ollama": OllamaLLM,
 	"transformers_local": TransformersLocalLLM,

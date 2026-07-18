@@ -12,7 +12,7 @@ from typing import Any
 import streamlit as st
 
 from core2.logger import logger
-from core.configs import Configs
+from core2.configs import Configs
 from schema_defaults import DEFAULT_ITEM_CATALOG_COLUMNS, DEFAULT_USER_PROFILE_COLUMNS
 from reco_engine import (
     build_engine,

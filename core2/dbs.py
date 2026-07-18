@@ -39,6 +39,17 @@ class BaseFaissDB(Configs):
             self.index = faiss.IndexFlatIP(self.dimension)
         else:
             self.index = faiss.IndexFlatL2(self.dimension)
+
+    def load_index(self) -> bool:
+        """Load a persisted FAISS index from disk, replacing the in-memory one.
+
+        Returns True when an existing index file was found and loaded, False
+        otherwise (leaving the freshly initialized empty index in place).
+        """
+        if self.index_path.exists():
+            self.index = faiss.read_index(self.index_path.as_posix())
+            return True
+        return False
     
     @abstractmethod
     def write(self, vectors: np.ndarray, ids: Optional[List[int]] = None) -> None:
@@ -186,3 +197,17 @@ class ContextVectorDB(BaseFaissDB):
         )
         vectors = np.vstack(self.context["embedding"].values).astype(np.float32)
         self.add_vectors(vectors=vectors, ids=self.context['id'].astype(str).tolist())
+
+    def load_context_vectors(self) -> bool:
+        """Reuse the persisted FAISS index instead of re-embedding the context.
+
+        Returns True once the existing index is loaded; raises if none is on
+        disk yet (in which case write_context_vectors() must be run first).
+        """
+        if not self.load_index():
+            raise FileNotFoundError(
+                f"No persisted FAISS index found at {self.index_path}. "
+                "Run write_context_vectors() at least once to build it."
+            )
+        print(f"[DEBUG] Loaded existing FAISS index from '{self.index_path}' with {self.index.ntotal} vectors")
+        return True
