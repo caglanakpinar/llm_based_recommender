@@ -41,6 +41,8 @@ from core2.prompting import (
     UserItemPrompt
 )
 from core2.dbs import ContextVectorDB, ContextDB
+from core2.embeddings import EMBEDDER_REGISTRY, describe_embedders
+from core2.llms import FREE_LLM_REGISTRY
 from core2.ranking import LLMRanker
 from core2.retrieval import Retrieval
 from core2.reco_engine import BuildRecoEngine
@@ -54,6 +56,15 @@ st.set_page_config(
 
 
 HUGGINGFACE_API_TOKEN = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_TOKEN") or ""
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or ""
+CLAUDE_API_KEY = os.getenv("CLAUDE_KEY") or os.getenv("ANTHROPIC_API_KEY") or ""
+
+PLATFORM_DEFAULT_MODELS = {
+    "google": Configs.DEFAULT_LLM_GOOGLE_MODEL_NAME,
+    "claude": Configs.DEFAULT_LLM_CLAUDE_MODEL_NAME,
+    "anthropic": Configs.DEFAULT_LLM_CLAUDE_MODEL_NAME,
+    "huggingface": Configs.DEFAULT_LLM_HUGGING_FACE_MODEL_NAME,
+}
 rag = None
 
 # --- session state ---
@@ -171,7 +182,7 @@ def _format_recommendations_table(parsed_response: dict[str, Any]) -> None:
         if recs:
             import pandas as pd
             df_recs = pd.DataFrame(recs)
-            st.dataframe(df_recs, use_container_width=True)
+            st.dataframe(df_recs, width="stretch")
         else:
             st.info("No recommendations generated.")
     else:
@@ -479,7 +490,7 @@ def _parquet_upload_section(
             df = load_preview(str(upload_dir))
             st.success(f"Uploaded {len(uploaded)} file(s) · {len(df)} rows")
             with st.expander("Preview uploaded data", expanded=False):
-                st.dataframe(df.head(20), use_container_width=True)
+                st.dataframe(df.head(20), width="stretch")
         except Exception as exc:
             st.error(str(exc))
 
@@ -504,7 +515,7 @@ def _sidebar() -> None:
             st.sidebar.markdown(f"**{name}**")
             col_remove, col_edit = st.sidebar.columns(2)
             with col_remove:
-                if st.button("Remove", key=f"remove_{name}", use_container_width=True):
+                if st.button("Remove", key=f"remove_{name}", width="stretch"):
                     delete_engine(name)
                     if st.session_state.selected_engine == name:
                         st.session_state.selected_engine = None
@@ -512,19 +523,19 @@ def _sidebar() -> None:
                         st.session_state.edit_engine = None
                     st.rerun()
             with col_edit:
-                if st.button("Edit", key=f"edit_{name}", use_container_width=True):
+                if st.button("Edit", key=f"edit_{name}", width="stretch"):
                     st.session_state.selected_engine = name
                     _go_builder(name)
                     st.rerun()
             st.sidebar.divider()
 
     st.sidebar.title("Navigation")
-    if st.sidebar.button("Reco Engine Generator", use_container_width=True):
+    if st.sidebar.button("Reco Engine Generator", width="stretch"):
         _go_builder(None)
         st.rerun()
 
     if engines:
-        if st.sidebar.button("Reco Generator", use_container_width=True):
+        if st.sidebar.button("Reco Generator", width="stretch"):
             _go_generator()
             st.rerun()
     else:
@@ -534,6 +545,10 @@ def _sidebar() -> None:
     st.sidebar.subheader("LLM settings")
     if HUGGINGFACE_API_TOKEN:
         st.sidebar.success("✓ HuggingFace API token loaded from environment (HF_TOKEN)")
+    if GOOGLE_API_KEY:
+        st.sidebar.success("✓ Google API key loaded from environment (GOOGLE_API_KEY)")
+    if CLAUDE_API_KEY:
+        st.sidebar.success("✓ Claude API key loaded from environment (CLAUDE_KEY)")
     st.session_state.openai_api_key = st.sidebar.text_input(
         "OpenAI API key",
         type="password",
@@ -546,6 +561,22 @@ def _sidebar() -> None:
         value=st.session_state.get("huggingface_api_key", HUGGINGFACE_API_TOKEN),
         help="Used as fallback if OpenAI key is not available. Auto-loaded from HF_TOKEN env var.",
     )
+    st.session_state.google_api_key = st.sidebar.text_input(
+        "Google API key",
+        type="password",
+        value=st.session_state.get("google_api_key", GOOGLE_API_KEY),
+        help="Used when LLM platform is google. Auto-loaded from GOOGLE_API_KEY/GEMINI_API_KEY env var.",
+    )
+    if st.session_state.google_api_key:
+        os.environ["GOOGLE_API_KEY"] = st.session_state.google_api_key
+    st.session_state.claude_api_key = st.sidebar.text_input(
+        "Claude API key",
+        type="password",
+        value=st.session_state.get("claude_api_key", CLAUDE_API_KEY),
+        help="Used when LLM platform is claude. Auto-loaded from CLAUDE_KEY/ANTHROPIC_API_KEY env var.",
+    )
+    if st.session_state.claude_api_key:
+        os.environ["CLAUDE_KEY"] = st.session_state.claude_api_key
     st.session_state.openai_model = st.sidebar.text_input(
         "Model",
         value=st.session_state.get("openai_model", "gpt-4o-mini"),
@@ -620,6 +651,40 @@ def _builder_page() -> None:
         load_preview=load_parquet_items,
     )
 
+    st.subheader("Models")
+    embedder_options = list(EMBEDDER_REGISTRY.keys())
+    embedder_help = describe_embedders()
+    platform_options = [name for name in FREE_LLM_REGISTRY if name != "anthropic"]
+    col_embed, col_platform, col_model = st.columns(3)
+    with col_embed:
+        embedding_model = st.selectbox(
+            "Embedding model",
+            embedder_options,
+            index=embedder_options.index(Configs.DEFAULT_EMBEDDING_MODEL_NAME)
+            if Configs.DEFAULT_EMBEDDING_MODEL_NAME in embedder_options
+            else 0,
+            key="embedding_model_name",
+            help="Encoder used to embed context prompts into the vector DB.",
+        )
+        st.caption(embedder_help.get(embedding_model, ""))
+    with col_platform:
+        llm_platform = st.selectbox(
+            "LLM platform",
+            platform_options,
+            index=platform_options.index(Configs.DEFAULT_LLM_MODEL_NAME)
+            if Configs.DEFAULT_LLM_MODEL_NAME in platform_options
+            else 0,
+            key="llm_platform",
+            help="Provider used by the relevance ranker (RAG LLM calls).",
+        )
+    with col_model:
+        llm_model_name = st.text_input(
+            "Model name",
+            value=PLATFORM_DEFAULT_MODELS.get(llm_platform, ""),
+            key=f"llm_model_name_{llm_platform}",
+            help="Model for the selected platform. Leave empty to use the platform default.",
+        )
+
     with st.form("engine_form"):
         engine_name = st.text_input(
             "Engine name",
@@ -672,7 +737,7 @@ def _builder_page() -> None:
         submitted = st.form_submit_button(
             "Generate Recommender Engine" if not is_edit else "Regenerate Recommender Engine",
             type="primary",
-            use_container_width=True,
+            width="stretch",
         )
 
     if submitted:
@@ -746,7 +811,7 @@ def _builder_page() -> None:
             
             with st.spinner("Generating Contextual DB and Vector DB"):
                 try:
-                    context_vector_db = ContextVectorDB(engine_name=engine_name, prompt=context_prompts)
+                    context_vector_db = ContextVectorDB(engine_name=engine_name, prompt=context_prompts, embedding_model_name=embedding_model)
                     context_vector_db.write_context_vectors()
                 except Exception as exc:
                     st.error(f"Error building Context Vector DB: {exc}")
@@ -761,10 +826,17 @@ def _builder_page() -> None:
                 retrieve = Retrieval(engine_name=engine_name, datasets=datasets, context_prompts=context_prompts, context_vector_db=context_vector_db, context_db=context_db2)
 
             with st.spinner("Generating Relevance Ranking engine with LLM Response"):
-                ranker = LLMRanker(engine_name=engine_name, datasets=datasets, retrieve=retrieve, context_prompts=context_prompts)
+                ranker = LLMRanker(
+                    engine_name=engine_name,
+                    datasets=datasets,
+                    retrieval=retrieve,
+                    context_prompts=context_prompts,
+                    llm_model_name=llm_platform,
+                    llm_model=llm_model_name.strip() or None,
+                )
 
             with st.spinner("Generating RAG engine with LLM Response"):
-                eng = BuildRecoEngine(engine_name=engine_name, datasets=datasets, retrieve=retrieve, ranker=ranker, context_prompts=context_prompts)
+                eng = BuildRecoEngine(engine_name=engine_name, datasets=datasets, retrieval=retrieve, ranker=ranker, context_prompts=context_prompts)
                 # Start KServe engine in a separate thread to avoid blocking Streamlit
                 engine_thread = threading.Thread(
                     target=eng.reco_engine_serve,
@@ -879,9 +951,9 @@ def _generator_page() -> None:
 
     col_a, col_b = st.columns(2)
     with col_a:
-        run_btn = st.button("Build prompt & run recommendation", type="primary", use_container_width=True)
+        run_btn = st.button("Build prompt & run recommendation", type="primary", width="stretch")
     with col_b:
-        preview_btn = st.button("Preview prompt only", use_container_width=True)
+        preview_btn = st.button("Preview prompt only", width="stretch")
     if run_btn or preview_btn:
         logger.info("Generator action triggered (run_btn=%s, preview_btn=%s)", run_btn, preview_btn)
 
@@ -977,7 +1049,7 @@ def _generator_page() -> None:
                         if interactions:
                             import pandas as pd
                             df_interactions = pd.DataFrame(interactions)
-                            st.dataframe(df_interactions, use_container_width=True)
+                            st.dataframe(df_interactions, width="stretch")
                         else:
                             st.info("No interactions found.")
 
@@ -988,7 +1060,7 @@ def _generator_page() -> None:
                         if rows:
                             import pandas as pd
                             with st.expander("Recommendations Table", expanded=True):
-                                st.dataframe(pd.DataFrame(rows), use_container_width=True)
+                                st.dataframe(pd.DataFrame(rows), width="stretch")
                         else:
                             logger.warning("No structured recommendation rows found")
                             st.info("No structured recommendation rows found.")

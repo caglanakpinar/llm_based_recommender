@@ -1,7 +1,7 @@
 
 
 
-from core.configs import Configs
+from core2.configs import Configs
 
 
 def generate_recommender_engine( 

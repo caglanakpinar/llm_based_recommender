@@ -248,6 +248,7 @@ class Configs:
         for key, value in overrides.items():
             if key in cls._YAML_KEYS or key == "datasets":
                 setattr(configs, key, value)
+        configs._setup_embedding_paths()
         configs.created_at = datetime.now(timezone.utc).isoformat()
         configs.save()
         dest.mkdir(parents=True, exist_ok=True)

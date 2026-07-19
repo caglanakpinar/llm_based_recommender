@@ -178,10 +178,11 @@ class ContextVectorDB(BaseFaissDB):
         dimension: int = 128,
         metric: str = "L2",
         prompt: BasePrompt | None = None,
+        embedding_model_name: str = Configs.DEFAULT_EMBEDDING_MODEL_NAME,
     ):
         super().__init__(
             engine_name=engine_name,
-            embedding_model_name=Configs.DEFAULT_EMBEDDING_MODEL_NAME,
+            embedding_model_name=embedding_model_name,
             dimension=dimension,
             metric=metric,
         )

@@ -58,7 +58,8 @@ class HuggingFaceInferenceLLM(BaseLLM):
 
 	def initialize_model(self) -> None:
 
-		self.model = self.DEFAULT_LLM_HUGGING_FACE_MODEL_NAME
+		if not self.model or self.model == self.DEFAULT_MODEL_NAME:
+			self.model = self.DEFAULT_LLM_HUGGING_FACE_MODEL_NAME
 		self.api_key = self.api_key or os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_TOKEN")
 		# meta-llama/Llama-3.2-1B-Instruct is only live on featherless-ai; auto provider
 		# selection skips providers not explicitly enabled on the account, so pin it.
@@ -119,7 +120,8 @@ class GoogleGeminiLLM(BaseLLM):
 	"""Google Gemini caller via the google-genai SDK."""
 
 	def initialize_model(self) -> None:
-		self.model = self.DEFAULT_LLM_GOOGLE_MODEL_NAME
+		if not self.model or self.model == self.DEFAULT_MODEL_NAME:
+			self.model = self.DEFAULT_LLM_GOOGLE_MODEL_NAME
 		self.api_key = self.api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 		if not self.api_key:
 			raise ValueError("GoogleGeminiLLM requires GOOGLE_API_KEY (or GEMINI_API_KEY) to be set")
