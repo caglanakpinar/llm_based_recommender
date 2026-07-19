@@ -1,3 +1,5 @@
+from core2.logger import logger
+
 from core2.configs import Configs
 from core2.dbs import ContextDB, ContextVectorDB
 import numpy as np
@@ -47,10 +49,19 @@ class Retrieval(Configs):
         FAISS-similar item for their first interaction (mirrors the eager
         users_last_interactions output for one user)."""
         rows = self.user_items[self.user_items[self.user_id] == user_id]
+        logger.info(
+            "[retrieve_candidates] user_items shape=%s columns=%s sample:\n%s",
+            self.user_items.shape, list(self.user_items.columns), self.user_items.head(),
+        )
+        logger.info("[retrieve_candidates] Retrieved %d rows for user_id: %s", len(rows), user_id)
         if rows.empty:
             return {}
         last_interactions = rows[self.item_id].tolist()
         similar = self.query(user_id, rows[self.item_id].iloc[0], k=1)
+        logger.info(
+            "[retrieve_candidates] user_id=%s last_interactions=%s similar=%s",
+            user_id, last_interactions, similar
+        )
         return {
             'last_interactions': last_interactions,
             'similar_item_id': [similar],
@@ -59,11 +70,21 @@ class Retrieval(Configs):
 
     def retrieve_candidates(self, user_id: str, top_k: int = 10) -> list:
         """Retrieve candidate items for a given user_id as list of dicts."""
+        logger.info(
+            "[retrieve_candidates] user_id=%s top_k=%d", user_id, top_k
+        )
         if user_id not in self.candidates:
             self.candidates[user_id] = self._user_candidates(user_id)
+        logger.info(
+            "[retrieve_candidates] user_id=%s candidates=%s",
+            user_id, self.candidates[user_id]
+        )
         if not self.candidates[user_id].get('candidates'):
             return []
-
+        logger.info(
+            "[retrieve_candidates] user_id=%s returning top_k=%d candidates",
+            user_id, top_k
+        )
         candidates = self.candidates[user_id]['candidates'][:top_k]
         # Return list of dicts with item_id
         return [{"item_id": item_id} for item_id in candidates]

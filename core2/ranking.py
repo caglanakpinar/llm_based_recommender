@@ -74,7 +74,8 @@ class LLMRanker(Configs):
         ):
         super().__init__(engine_name)
         self.retrieval = retrieval
-        self.llm_model_name = create_llm(llm_model_name, engine_name, model=llm_model)
+        llm_kwargs = {"model": llm_model} if llm_model else {}
+        self.llm_model_name = create_llm(llm_model_name, engine_name, **llm_kwargs)
         self.embedder = self.retrieval.embedder._model
         self.context_prompts = context_prompts
 

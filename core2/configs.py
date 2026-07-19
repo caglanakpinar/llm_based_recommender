@@ -150,6 +150,9 @@ class Configs:
             "users_parquet_folder",
             "items_parquet_folder",
             "llm_chat",
+            "embedding_model",
+            "llm_platform",
+            "llm_model",
             "user_id",
             "num_items",
             "num_users",
@@ -310,6 +313,9 @@ class Configs:
         self.users_parquet_folder = None
         self.items_parquet_folder = None
         self.llm_chat = ""
+        self.embedding_model = self.DEFAULT_EMBEDDING_MODEL_NAME
+        self.llm_platform = self.DEFAULT_LLM_MODEL_NAME
+        self.llm_model = ""
         self.num_items = 0
         self.num_users = 0
         self.created_at = None
@@ -418,6 +424,9 @@ class Configs:
             "users_parquet_folder": self.users_parquet_folder,
             "items_parquet_folder": self.items_parquet_folder,
             "llm_chat": self.llm_chat,
+            "embedding_model": self.embedding_model,
+            "llm_platform": self.llm_platform,
+            "llm_model": self.llm_model,
             "user_id": self.user_id,
             "num_items": self.num_items,
             "num_users": self.num_users,

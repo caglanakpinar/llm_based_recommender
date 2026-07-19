@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 import json
 
@@ -23,7 +24,7 @@ class BaseFaissDB(Configs):
         self.dimension = int(dimension)
         self.metric = str(metric).upper()
         self.index = None
-        self.index_path = self.resolve_repo_path(self.DEFAULT_CONTEXT_FAISS_NAME)
+        self.index_path = Path(self.current_dir / engine_name / self.DEFAULT_CONTEXT_FAISS_NAME)
         self.embedding_model_name = embedding_model_name
         self.embedder = create_embedder(
             embedding_model_name,
@@ -31,6 +32,9 @@ class BaseFaissDB(Configs):
             model_name=embedding_model_name,
             normalize=True
         )
+        # Size the index to the embedder's real output width; the constructor
+        # default (128) rarely matches the actual model (e.g. bge-small is 384).
+        self.dimension = int(getattr(self.embedder, "dimension", self.dimension))
         self._initialize_index()
 
     def _initialize_index(self):
@@ -97,7 +101,7 @@ class BaseChromaDB(Configs):
         self.collection_name = str(collection_name)
         self._chroma_client = None
         self._collection = None
-        self.persist_directory = self.resolve_repo_path(Configs.DEFAULT_CONTEXT_CHROMODB_PATH)
+        self.persist_directory = Path(self.current_dir / project_name / self.DEFAULT_CONTEXT_CHROMODB_NAME)
 
     def _get_collection(self):
         if self._collection is not None:
