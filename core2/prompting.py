@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -7,6 +9,30 @@ from core2.embeddings import create_embedder
 from core2.features import FEATURES
 
 
+def _load_prompt_cache(cache_path: Path) -> pd.DataFrame | None:
+    """Return the cached prompt DataFrame if present, else None."""
+    if cache_path.exists():
+        df = pd.read_parquet(cache_path)
+        print(f"[DEBUG] Loaded cached prompts from '{cache_path}' ({len(df)} rows)")
+        return df
+    return None
+
+
+def _save_prompt_cache(cache_path: Path, df: pd.DataFrame) -> None:
+    """Persist a built prompt DataFrame so later runs skip the pandas build."""
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    out = df.copy()
+    for col in out.columns:
+        if out[col].dtype != object:
+            continue
+        # fillna(0) in the feature merges leaves int 0s inside string columns
+        # (e.g. session_id), which pyarrow refuses to serialize — normalize
+        # mixed-type object columns to plain strings for the cache.
+        non_null = out[col].dropna()
+        if not non_null.empty and non_null.map(type).nunique() > 1:
+            out[col] = out[col].astype(str)
+    out.to_parquet(cache_path)
+    print(f"[DEBUG] Saved prompt cache to '{cache_path}' ({len(out)} rows)")
 
 
 class BasePrompt(Configs):
@@ -42,17 +68,24 @@ class UserPrompt(Configs):
         args = {k: v for k, v in row.items() if pd.notnull(v)}
         return self.prompt.load_prompt_template(args)   
 
-    def build_user_feature_dataset(self) -> pd.DataFrame:
+    def build_user_feature_dataset(self, use_cache: bool = True) -> pd.DataFrame:
         """Build feature rows for unique users from FEATURES['user_features']."""
+        cache_path = self.engine_root / "cache" / "user_prompts.parquet"
+        if use_cache:
+            cached = _load_prompt_cache(cache_path)
+            if cached is not None:
+                self.context = cached
+                return
         self.context = self.users.groupby(self.user_id).first().reset_index()
         kwargs = {'user_id': self.user_id}
         user_feature_funcs = FEATURES.get("user_features", {})
         for feature_name, feature_fn in user_feature_funcs.items():
             _feature_df = feature_fn(self.users, **kwargs)
             self.context = self.context.merge(
-                _feature_df, on=self.user_id, how="left").fillna(0) 
+                _feature_df, on=self.user_id, how="left").fillna(0)
 
         self.context["generated_prompt"] = self.context.apply(self._prompt_from_row, axis=1)
+        _save_prompt_cache(cache_path, self.context)
 
             
 class ItemPrompt(Configs):
@@ -68,17 +101,24 @@ class ItemPrompt(Configs):
         args = {k: v for k, v in row.items() if pd.notnull(v)}
         return self.prompt.load_prompt_template(args)   
 
-    def build_item_feature_dataset(self) -> pd.DataFrame:
+    def build_item_feature_dataset(self, use_cache: bool = True) -> pd.DataFrame:
         """Build feature rows for unique items from FEATURES['item_features']."""
+        cache_path = self.engine_root / "cache" / "item_prompts.parquet"
+        if use_cache:
+            cached = _load_prompt_cache(cache_path)
+            if cached is not None:
+                self.context = cached
+                return
         self.context = self.items.groupby(self.item_id).first().reset_index()
         kwargs = {'user_id': self.user_id}
         user_feature_funcs = FEATURES.get("item_features", {})
         for feature_name, feature_fn in user_feature_funcs.items():
             _feature_df = feature_fn(self.items, **kwargs)
             self.context = self.context.merge(
-                _feature_df, on=self.item_id, how="left").fillna(0) 
-        
+                _feature_df, on=self.item_id, how="left").fillna(0)
+
         self.context["generated_prompt"] = self.context.apply(self._prompt_from_row, axis=1)
+        _save_prompt_cache(cache_path, self.context)
 
 
 class UserItemPrompt(Configs):
@@ -100,8 +140,14 @@ class UserItemPrompt(Configs):
         args = {k: v for k, v in row.items() if pd.notnull(v)}
         return self.prompt.load_prompt_template(args)   
 
-    def build_user_item_feature_dataset(self) -> pd.DataFrame:
+    def build_user_item_feature_dataset(self, use_cache: bool = True) -> pd.DataFrame:
         """Build feature rows for unique user-item pairs from FEATURES['user_item_features']."""
+        cache_path = self.engine_root / "cache" / "user_item_prompts.parquet"
+        if use_cache:
+            cached = _load_prompt_cache(cache_path)
+            if cached is not None:
+                self.context = cached
+                return
         self.context = self.user_item.groupby([self.user_id, self.item_id]).first().reset_index().merge(
             self.users, on=self.user_id, how="left"
         ).merge(
@@ -112,9 +158,10 @@ class UserItemPrompt(Configs):
         for feature_name, feature_fn in user_item_feature_funcs.items():
             _feature_df = feature_fn(self.user_item, **kwargs)
             self.context = self.context.merge(
-                _feature_df, on=[self.user_id, self.item_id], how="left").fillna(0) 
-        
+                _feature_df, on=[self.user_id, self.item_id], how="left").fillna(0)
+
         self.context["generated_prompt"] = self.context.apply(self._prompt_from_row, axis=1)
+        _save_prompt_cache(cache_path, self.context)
 
 
 class RelevanceScorePrompt(Configs):
@@ -134,7 +181,14 @@ class RelevanceScorePrompt(Configs):
         args = {k: v for k, v in row.items() if pd.notnull(v)}
         return self.prompt.load_prompt_template(args)
 
-    def generate_rag_retrieval_context(self) -> pd.DataFrame:
+    def generate_rag_retrieval_context(self, use_cache: bool = True) -> pd.DataFrame:
+        cache_path = self.engine_root / "cache" / "rag_context.parquet"
+        if use_cache:
+            cached = _load_prompt_cache(cache_path)
+            if cached is not None:
+                self.context = cached
+                self.context_wt_relevance_score = cached.copy()
+                return
         # Ensure consistent dtypes by converting to string
         item_users_dup = self.item_users.drop_duplicates([self.user_id, self.item_id]).copy()
         item_users_dup[self.user_id] = item_users_dup[self.user_id].astype(str)
@@ -178,6 +232,7 @@ class RelevanceScorePrompt(Configs):
             relevance_score_df, on=[self.user_id, self.item_id], how="left"
         )
         self.context_wt_relevance_score = self.context.copy()
+        _save_prompt_cache(cache_path, self.context)
 
 
     def build_retrieval_context(self) -> pd.DataFrame:

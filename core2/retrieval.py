@@ -1,3 +1,5 @@
+from core2.logger import logger
+
 from core2.configs import Configs
 from core2.dbs import ContextDB, ContextVectorDB
 import numpy as np
@@ -14,14 +16,18 @@ class Retrieval(Configs):
         self.context_db = context_db
         self.embedder = context_vector_db.embedder
         self.user_items = context_db.context if hasattr(context_db, 'context') else pd.DataFrame()
-        self.candidates = self.users_last_interactions() if not self.user_items.empty else {}
+        # Candidates are computed lazily per user on first request and cached
+        # here; eagerly querying FAISS for all ~50k user-item rows at init made
+        # construction take hours.
+        self.candidates = {}
         # Get column names from datasets or use defaults
 
     def users_last_interactions(self) -> dict:
-        """Generate candidates for each user based on their last interactions."""
+        """Eagerly generate candidates for every user (slow; prefer the lazy
+        per-user path in retrieve_candidates)."""
         if self.user_items.empty:
             return {}
-        
+
         # Apply query function to get similar items
         self.user_items['similar_item_id'] = self.user_items.apply(
             lambda row: self.query(row[self.user_id], row[self.item_id], k=1), axis=1
@@ -33,16 +39,52 @@ class Retrieval(Configs):
         print(last_interactions.head())
         # Combine interactions with similar items
         last_interactions['candidates'] = last_interactions.apply(
-            lambda row: list(set(row['last_interactions'] + row['similar_item_id'][0])), 
+            lambda row: list(set(row['last_interactions'] + row['similar_item_id'][0])),
             axis=1
         )
         return last_interactions.set_index(self.user_id).to_dict(orient='index')
 
+    def _user_candidates(self, user_id: str) -> dict:
+        """Compute candidates for a single user: their interacted items plus a
+        FAISS-similar item for their first interaction (mirrors the eager
+        users_last_interactions output for one user)."""
+        rows = self.user_items[self.user_items[self.user_id] == user_id]
+        logger.info(
+            "[retrieve_candidates] user_items shape=%s columns=%s sample:\n%s",
+            self.user_items.shape, list(self.user_items.columns), self.user_items.head(),
+        )
+        logger.info("[retrieve_candidates] Retrieved %d rows for user_id: %s", len(rows), user_id)
+        if rows.empty:
+            return {}
+        last_interactions = rows[self.item_id].tolist()
+        similar = self.query(user_id, rows[self.item_id].iloc[0], k=1)
+        logger.info(
+            "[retrieve_candidates] user_id=%s last_interactions=%s similar=%s",
+            user_id, last_interactions, similar
+        )
+        return {
+            'last_interactions': last_interactions,
+            'similar_item_id': [similar],
+            'candidates': list(set(last_interactions + similar)),
+        }
+
     def retrieve_candidates(self, user_id: str, top_k: int = 10) -> list:
         """Retrieve candidate items for a given user_id as list of dicts."""
-        if user_id not in self.candidates or not self.candidates[user_id].get('candidates'):
+        logger.info(
+            "[retrieve_candidates] user_id=%s top_k=%d", user_id, top_k
+        )
+        if user_id not in self.candidates:
+            self.candidates[user_id] = self._user_candidates(user_id)
+        logger.info(
+            "[retrieve_candidates] user_id=%s candidates=%s",
+            user_id, self.candidates[user_id]
+        )
+        if not self.candidates[user_id].get('candidates'):
             return []
-        
+        logger.info(
+            "[retrieve_candidates] user_id=%s returning top_k=%d candidates",
+            user_id, top_k
+        )
         candidates = self.candidates[user_id]['candidates'][:top_k]
         # Return list of dicts with item_id
         return [{"item_id": item_id} for item_id in candidates]

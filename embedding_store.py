@@ -17,7 +17,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer
 
-from core.configs import Configs
+from core2.configs import Configs
 
 ROOT = Configs.current_dir
 Configs.configure_hf_environment()

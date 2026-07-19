@@ -5,14 +5,13 @@ from __future__ import annotations
 import json
 import os
 import re
-import threading
 from typing import Any
 
 
 import streamlit as st
 
 from core2.logger import logger
-from core.configs import Configs
+from core2.configs import Configs
 from schema_defaults import DEFAULT_ITEM_CATALOG_COLUMNS, DEFAULT_USER_PROFILE_COLUMNS
 from reco_engine import (
     build_engine,
@@ -35,15 +34,20 @@ from reco_engine import (
 
 from core2.datasets import DataSets
 from core2.prompting import (
-    RelevanceScorePrompt, 
-    UserPrompt, 
-    ItemPrompt, 
+    RelevanceScorePrompt,
+    UserPrompt,
+    ItemPrompt,
     UserItemPrompt
 )
-from core2.dbs import ContextVectorDB, ContextDB
-from core2.ranking import LLMRanker
-from core2.retrieval import Retrieval
-from core2.reco_engine import BuildRecoEngine
+from core2.embeddings import EMBEDDER_REGISTRY, describe_embedders
+from core2.llms import FREE_LLM_REGISTRY
+from reco_api import (
+    KSERVE_API_PORT,
+    KSERVE_API_URL,
+    assemble_predictor,
+    build_predictor_for_engine,
+    start_api,
+)
 
 st.set_page_config(
     page_title="LLM Recommender",
@@ -53,7 +57,31 @@ st.set_page_config(
 
 
 
-HUGGINGFACE_API_TOKEN = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_TOKEN") or ""
+def _resolve_env_key(candidates: tuple[str, ...]) -> tuple[str, str | None]:
+    """Return ``(value, source_env_var)`` for the first candidate env var that is
+    set. ``source_env_var`` is the exact variable name the value came from (so the
+    sidebar can report e.g. GEMINI_API_KEY vs GOOGLE_API_KEY), or ``None`` when
+    none of the candidates are set."""
+    for name in candidates:
+        value = os.getenv(name)
+        if value:
+            return value, name
+    return "", None
+
+
+OPENAI_API_KEY, OPENAI_ENV_SOURCE = _resolve_env_key(("OPENAI_API_KEY",))
+HUGGINGFACE_API_TOKEN, HUGGINGFACE_ENV_SOURCE = _resolve_env_key(
+    ("HF_TOKEN", "HUGGINGFACE_API_TOKEN")
+)
+GOOGLE_API_KEY, GOOGLE_ENV_SOURCE = _resolve_env_key(("GOOGLE_API_KEY", "GEMINI_API_KEY"))
+CLAUDE_API_KEY, CLAUDE_ENV_SOURCE = _resolve_env_key(("CLAUDE_KEY", "ANTHROPIC_API_KEY"))
+
+PLATFORM_DEFAULT_MODELS = {
+    "google": Configs.DEFAULT_LLM_GOOGLE_MODEL_NAME,
+    "claude": Configs.DEFAULT_LLM_CLAUDE_MODEL_NAME,
+    "anthropic": Configs.DEFAULT_LLM_CLAUDE_MODEL_NAME,
+    "huggingface": Configs.DEFAULT_LLM_HUGGING_FACE_MODEL_NAME,
+}
 rag = None
 
 # --- session state ---
@@ -171,7 +199,7 @@ def _format_recommendations_table(parsed_response: dict[str, Any]) -> None:
         if recs:
             import pandas as pd
             df_recs = pd.DataFrame(recs)
-            st.dataframe(df_recs, use_container_width=True)
+            st.dataframe(df_recs, width="stretch")
         else:
             st.info("No recommendations generated.")
     else:
@@ -338,6 +366,30 @@ def _extract_recommendation_rows(raw: dict[str, Any] | str) -> list[dict[str, An
     return rows
 
 
+def _ensure_predictor(engine_name: str):
+    """Return a cached KServe predictor for ``engine_name``, building one from
+    persisted engine artifacts (docs/configs.yaml) on first access this session."""
+    predictors = st.session_state.setdefault("kserve_predictors", {})
+    if predictors.get(engine_name) is not None:
+        return predictors[engine_name]
+
+    predictor = build_predictor_for_engine(engine_name)
+    predictors[engine_name] = predictor
+    logger.info("KServe predictor ready for engine '%s'", engine_name)
+    return predictor
+
+
+@st.cache_resource(show_spinner=False)
+def _start_kserve_api(port: int = KSERVE_API_PORT) -> dict[str, Any]:
+    """Start the KServe API once per process (st.cache_resource guards it).
+
+    The server itself lives in ``reco_api`` so its FastAPI app is not defined in
+    the module Streamlit runs — otherwise Streamlit's own uvicorn server picks
+    it up and serves it on the Streamlit port.
+    """
+    return start_api(port)
+
+
 def _get_hf_model_for_provider(openai_model: str) -> str:
     """Map OpenAI model names to HuggingFace compatible models."""
     model_map = {
@@ -479,7 +531,7 @@ def _parquet_upload_section(
             df = load_preview(str(upload_dir))
             st.success(f"Uploaded {len(uploaded)} file(s) · {len(df)} rows")
             with st.expander("Preview uploaded data", expanded=False):
-                st.dataframe(df.head(20), use_container_width=True)
+                st.dataframe(df.head(20), width="stretch")
         except Exception as exc:
             st.error(str(exc))
 
@@ -504,7 +556,7 @@ def _sidebar() -> None:
             st.sidebar.markdown(f"**{name}**")
             col_remove, col_edit = st.sidebar.columns(2)
             with col_remove:
-                if st.button("Remove", key=f"remove_{name}", use_container_width=True):
+                if st.button("Remove", key=f"remove_{name}", width="stretch"):
                     delete_engine(name)
                     if st.session_state.selected_engine == name:
                         st.session_state.selected_engine = None
@@ -512,19 +564,19 @@ def _sidebar() -> None:
                         st.session_state.edit_engine = None
                     st.rerun()
             with col_edit:
-                if st.button("Edit", key=f"edit_{name}", use_container_width=True):
+                if st.button("Edit", key=f"edit_{name}", width="stretch"):
                     st.session_state.selected_engine = name
                     _go_builder(name)
                     st.rerun()
             st.sidebar.divider()
 
     st.sidebar.title("Navigation")
-    if st.sidebar.button("Reco Engine Generator", use_container_width=True):
+    if st.sidebar.button("Reco Engine Generator", width="stretch"):
         _go_builder(None)
         st.rerun()
 
     if engines:
-        if st.sidebar.button("Reco Generator", use_container_width=True):
+        if st.sidebar.button("Reco Generator", width="stretch"):
             _go_generator()
             st.rerun()
     else:
@@ -532,13 +584,24 @@ def _sidebar() -> None:
 
     st.sidebar.divider()
     st.sidebar.subheader("LLM settings")
-    if HUGGINGFACE_API_TOKEN:
-        st.sidebar.success("✓ HuggingFace API token loaded from environment (HF_TOKEN)")
+
+    # Re-checked on every rerun: report which provider keys were found in the
+    # environment and the exact variable each one came from.
+    _env_status = [
+        ("OpenAI API key", OPENAI_API_KEY, OPENAI_ENV_SOURCE),
+        ("HuggingFace API token", HUGGINGFACE_API_TOKEN, HUGGINGFACE_ENV_SOURCE),
+        ("Google API key", GOOGLE_API_KEY, GOOGLE_ENV_SOURCE),
+        ("Claude API key", CLAUDE_API_KEY, CLAUDE_ENV_SOURCE),
+    ]
+    for label, value, source in _env_status:
+        if value:
+            st.sidebar.success(f"✓ {label} loaded from environment ({source})")
+
     st.session_state.openai_api_key = st.sidebar.text_input(
         "OpenAI API key",
         type="password",
-        value=st.session_state.get("openai_api_key", ""),
-        help="Leave empty to use HuggingFace instead.",
+        value=st.session_state.get("openai_api_key", OPENAI_API_KEY),
+        help="Leave empty to use HuggingFace instead. Auto-loaded from OPENAI_API_KEY env var.",
     )
     st.session_state.huggingface_api_key = st.sidebar.text_input(
         "HuggingFace API key",
@@ -546,6 +609,22 @@ def _sidebar() -> None:
         value=st.session_state.get("huggingface_api_key", HUGGINGFACE_API_TOKEN),
         help="Used as fallback if OpenAI key is not available. Auto-loaded from HF_TOKEN env var.",
     )
+    st.session_state.google_api_key = st.sidebar.text_input(
+        "Google API key",
+        type="password",
+        value=st.session_state.get("google_api_key", GOOGLE_API_KEY),
+        help="Used when LLM platform is google. Auto-loaded from GOOGLE_API_KEY/GEMINI_API_KEY env var.",
+    )
+    if st.session_state.google_api_key:
+        os.environ["GOOGLE_API_KEY"] = st.session_state.google_api_key
+    st.session_state.claude_api_key = st.sidebar.text_input(
+        "Claude API key",
+        type="password",
+        value=st.session_state.get("claude_api_key", CLAUDE_API_KEY),
+        help="Used when LLM platform is claude. Auto-loaded from CLAUDE_KEY/ANTHROPIC_API_KEY env var.",
+    )
+    if st.session_state.claude_api_key:
+        os.environ["CLAUDE_KEY"] = st.session_state.claude_api_key
     st.session_state.openai_model = st.sidebar.text_input(
         "Model",
         value=st.session_state.get("openai_model", "gpt-4o-mini"),
@@ -620,6 +699,40 @@ def _builder_page() -> None:
         load_preview=load_parquet_items,
     )
 
+    st.subheader("Models")
+    embedder_options = list(EMBEDDER_REGISTRY.keys())
+    embedder_help = describe_embedders()
+    platform_options = [name for name in FREE_LLM_REGISTRY if name != "anthropic"]
+    col_embed, col_platform, col_model = st.columns(3)
+    with col_embed:
+        embedding_model = st.selectbox(
+            "Embedding model",
+            embedder_options,
+            index=embedder_options.index(Configs.DEFAULT_EMBEDDING_MODEL_NAME)
+            if Configs.DEFAULT_EMBEDDING_MODEL_NAME in embedder_options
+            else 0,
+            key="embedding_model_name",
+            help="Encoder used to embed context prompts into the vector DB.",
+        )
+        st.caption(embedder_help.get(embedding_model, ""))
+    with col_platform:
+        llm_platform = st.selectbox(
+            "LLM platform",
+            platform_options,
+            index=platform_options.index(Configs.DEFAULT_LLM_MODEL_NAME)
+            if Configs.DEFAULT_LLM_MODEL_NAME in platform_options
+            else 0,
+            key="llm_platform",
+            help="Provider used by the relevance ranker (RAG LLM calls).",
+        )
+    with col_model:
+        llm_model_name = st.text_input(
+            "Model name",
+            value=PLATFORM_DEFAULT_MODELS.get(llm_platform, ""),
+            key=f"llm_model_name_{llm_platform}",
+            help="Model for the selected platform. Leave empty to use the platform default.",
+        )
+
     with st.form("engine_form"):
         engine_name = st.text_input(
             "Engine name",
@@ -672,7 +785,7 @@ def _builder_page() -> None:
         submitted = st.form_submit_button(
             "Generate Recommender Engine" if not is_edit else "Regenerate Recommender Engine",
             type="primary",
-            use_container_width=True,
+            width="stretch",
         )
 
     if submitted:
@@ -709,6 +822,9 @@ def _builder_page() -> None:
                 users_parquet_folder=active_users,
                 items_parquet_folder=active_items,
                 llm_chat=llm_chat,
+                embedding_model=embedding_model,
+                llm_platform=llm_platform,
+                llm_model=llm_model_name.strip(),
             )
 
             with st.spinner("Building Recommender Engine"):
@@ -744,41 +860,18 @@ def _builder_page() -> None:
                 context_prompts.generate_rag_retrieval_context()
                 print(f"[DEBUG] Context/Relevance Prompt sample: {str(context_prompts.context['generated_prompt'].iloc[0])[:200]}...")
             
-            with st.spinner("Generating Contextual DB and Vector DB"):
-                try:
-                    context_vector_db = ContextVectorDB(engine_name=engine_name, prompt=context_prompts)
-                    context_vector_db.write_context_vectors()
-                except Exception as exc:
-                    st.error(f"Error building Context Vector DB: {exc}")
-
-                try:
-                    context_db2 = ContextDB(engine_name=engine_name, prompt=context_prompts)
-                    context_db2.write_context()
-                except Exception as exc:
-                    st.error(f"Error building Context DB: {exc}")
-
-            with st.spinner("Generating Contextual Retrieval engine"):
-                retrieve = Retrieval(engine_name=engine_name, datasets=datasets, context_prompts=context_prompts, context_vector_db=context_vector_db, context_db=context_db2)
-
-            with st.spinner("Generating Relevance Ranking engine with LLM Response"):
-                ranker = LLMRanker(engine_name=engine_name, datasets=datasets, retrieve=retrieve, context_prompts=context_prompts)
-
-            with st.spinner("Generating RAG engine with LLM Response"):
-                eng = BuildRecoEngine(engine_name=engine_name, datasets=datasets, retrieve=retrieve, ranker=ranker, context_prompts=context_prompts)
-                # Start KServe engine in a separate thread to avoid blocking Streamlit
-                engine_thread = threading.Thread(
-                    target=eng.reco_engine_serve,
-                    daemon=True,
-                    name=f"kserve-{engine_name}"
+            with st.spinner("Building DBs, retrieval, ranker, and KServe engine"):
+                predictor = assemble_predictor(
+                    engine_name,
+                    datasets,
+                    context_prompts,
+                    embedding_model_name=embedding_model,
+                    llm_platform=llm_platform,
+                    llm_model=llm_model_name.strip() or None,
+                    write=True,
                 )
-                engine_thread.start()
-                print(f"[DEBUG] KServe engine thread started for '{engine_name}'")
-                
-                # Cache the predictor in session state for direct access if KServe server unavailable
-                if "kserve_predictors" not in st.session_state:
-                    st.session_state["kserve_predictors"] = {}
-                predictor = eng.initialize_kserve_api()
-                st.session_state["kserve_predictors"][engine_name] = predictor
+                predictors = st.session_state.setdefault("kserve_predictors", {})
+                predictors[engine_name] = predictor
                 print(f"[DEBUG] KServe predictor cached in session state for '{engine_name}'")
 
             st.session_state.selected_engine = engine_name
@@ -826,6 +919,20 @@ def _generator_page() -> None:
         meta.get("interactions_parquet_folder"),
         meta.get("top_k"),
     )
+
+    # Bring the KServe predictor up as soon as the generator opens, rebuilding it
+    # from persisted engine artifacts when it isn't already cached this session.
+    predictors = st.session_state.get("kserve_predictors", {})
+    if predictors.get(engine_name) is not None:
+        st.success(f"✓ KServe engine ready for **{engine_name}**")
+    else:
+        try:
+            with st.spinner(f"Starting KServe engine for '{engine_name}'…"):
+                _ensure_predictor(engine_name)
+            st.success(f"✓ KServe engine ready for **{engine_name}**")
+        except Exception as exc:
+            logger.exception("Failed to start KServe engine for '%s'", engine_name)
+            st.error(f"Failed to start KServe engine: {exc}")
 
     users_folder = meta.get("users_parquet_folder")
     interactions_folder = meta.get("interactions_parquet_folder")
@@ -879,9 +986,9 @@ def _generator_page() -> None:
 
     col_a, col_b = st.columns(2)
     with col_a:
-        run_btn = st.button("Build prompt & run recommendation", type="primary", use_container_width=True)
+        run_btn = st.button("Build prompt & run recommendation", type="primary", width="stretch")
     with col_b:
-        preview_btn = st.button("Preview prompt only", use_container_width=True)
+        preview_btn = st.button("Preview prompt only", width="stretch")
     if run_btn or preview_btn:
         logger.info("Generator action triggered (run_btn=%s, preview_btn=%s)", run_btn, preview_btn)
 
@@ -931,19 +1038,19 @@ def _generator_page() -> None:
                 try:
                     logger.info("Calling KServe API for engine '%s' with user_id '%s'", engine_name, target_user_id)
                     
-                    # Build API request for KServe predictor
+                    # Build API request for KServe predictor. The engine is
+                    # selected via the request body, so one endpoint serves all.
                     api_request = {
+                        "engine_name": engine_name,
                         "user_id": str(target_user_id),
                         "top_k": int(run_top_k)
                     }
-                    
+
                     # Call the KServe predictor via HTTP API
                     import requests
                     try:
-                        # Try to call the KServe server (default port 8080)
-                        api_url = f"http://localhost:8080/v1/models/{engine_name}:predict"
-                        logger.info(f"Calling KServe endpoint: {api_url}")
-                        response = requests.post(api_url, json=api_request, timeout=30)
+                        logger.info(f"Calling KServe endpoint: {KSERVE_API_URL}")
+                        response = requests.post(KSERVE_API_URL, json=api_request, timeout=120)
                         response.raise_for_status()
                         raw = response.json()
                         logger.info("KServe API call succeeded")
@@ -977,7 +1084,7 @@ def _generator_page() -> None:
                         if interactions:
                             import pandas as pd
                             df_interactions = pd.DataFrame(interactions)
-                            st.dataframe(df_interactions, use_container_width=True)
+                            st.dataframe(df_interactions, width="stretch")
                         else:
                             st.info("No interactions found.")
 
@@ -988,7 +1095,7 @@ def _generator_page() -> None:
                         if rows:
                             import pandas as pd
                             with st.expander("Recommendations Table", expanded=True):
-                                st.dataframe(pd.DataFrame(rows), use_container_width=True)
+                                st.dataframe(pd.DataFrame(rows), width="stretch")
                         else:
                             logger.warning("No structured recommendation rows found")
                             st.info("No structured recommendation rows found.")
@@ -1011,6 +1118,15 @@ def _generator_page() -> None:
 
 
 def main() -> None:
+    # Bring the KServe API up on startup, but only once at least one engine
+    # exists — nothing to serve otherwise. st.cache_resource keeps it to a
+    # single background server per process across reruns.
+    if list_engines():
+        try:
+            _start_kserve_api()
+        except Exception:
+            logger.exception("Failed to start KServe API server")
+
     _sidebar()
 
     if st.session_state.page == "generator" and list_engines():

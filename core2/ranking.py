@@ -63,17 +63,19 @@ class LLMRanker(Configs):
     """LLM-based ranker for generating relevance scores."""
 
     def __init__(
-            self, 
-            engine_name: str, 
+            self,
+            engine_name: str,
             datasets: DataSets,
             retrieval: Retrieval,
             context_prompts: RelevanceScorePrompt,
-            llm_model_name: str = Configs.DEFAULT_LLM_MODEL_NAME
+            llm_model_name: str = Configs.DEFAULT_LLM_MODEL_NAME,
+            llm_model: str | None = None,
 
         ):
         super().__init__(engine_name)
         self.retrieval = retrieval
-        self.llm_model_name = create_llm(llm_model_name, engine_name)
+        llm_kwargs = {"model": llm_model} if llm_model else {}
+        self.llm_model_name = create_llm(llm_model_name, engine_name, **llm_kwargs)
         self.embedder = self.retrieval.embedder._model
         self.context_prompts = context_prompts
 

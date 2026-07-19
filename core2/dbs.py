@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 import json
 
@@ -23,7 +24,7 @@ class BaseFaissDB(Configs):
         self.dimension = int(dimension)
         self.metric = str(metric).upper()
         self.index = None
-        self.index_path = self.resolve_repo_path(self.DEFAULT_CONTEXT_FAISS_NAME)
+        self.index_path = Path(self.current_dir / engine_name / self.DEFAULT_CONTEXT_FAISS_NAME)
         self.embedding_model_name = embedding_model_name
         self.embedder = create_embedder(
             embedding_model_name,
@@ -31,6 +32,9 @@ class BaseFaissDB(Configs):
             model_name=embedding_model_name,
             normalize=True
         )
+        # Size the index to the embedder's real output width; the constructor
+        # default (128) rarely matches the actual model (e.g. bge-small is 384).
+        self.dimension = int(getattr(self.embedder, "dimension", self.dimension))
         self._initialize_index()
 
     def _initialize_index(self):
@@ -39,6 +43,17 @@ class BaseFaissDB(Configs):
             self.index = faiss.IndexFlatIP(self.dimension)
         else:
             self.index = faiss.IndexFlatL2(self.dimension)
+
+    def load_index(self) -> bool:
+        """Load a persisted FAISS index from disk, replacing the in-memory one.
+
+        Returns True when an existing index file was found and loaded, False
+        otherwise (leaving the freshly initialized empty index in place).
+        """
+        if self.index_path.exists():
+            self.index = faiss.read_index(self.index_path.as_posix())
+            return True
+        return False
     
     @abstractmethod
     def write(self, vectors: np.ndarray, ids: Optional[List[int]] = None) -> None:
@@ -86,7 +101,7 @@ class BaseChromaDB(Configs):
         self.collection_name = str(collection_name)
         self._chroma_client = None
         self._collection = None
-        self.persist_directory = self.resolve_repo_path(Configs.DEFAULT_CONTEXT_CHROMODB_PATH)
+        self.persist_directory = Path(self.current_dir / project_name / self.DEFAULT_CONTEXT_CHROMODB_NAME)
 
     def _get_collection(self):
         if self._collection is not None:
@@ -167,10 +182,11 @@ class ContextVectorDB(BaseFaissDB):
         dimension: int = 128,
         metric: str = "L2",
         prompt: BasePrompt | None = None,
+        embedding_model_name: str = Configs.DEFAULT_EMBEDDING_MODEL_NAME,
     ):
         super().__init__(
             engine_name=engine_name,
-            embedding_model_name=Configs.DEFAULT_EMBEDDING_MODEL_NAME,
+            embedding_model_name=embedding_model_name,
             dimension=dimension,
             metric=metric,
         )
@@ -186,3 +202,17 @@ class ContextVectorDB(BaseFaissDB):
         )
         vectors = np.vstack(self.context["embedding"].values).astype(np.float32)
         self.add_vectors(vectors=vectors, ids=self.context['id'].astype(str).tolist())
+
+    def load_context_vectors(self) -> bool:
+        """Reuse the persisted FAISS index instead of re-embedding the context.
+
+        Returns True once the existing index is loaded; raises if none is on
+        disk yet (in which case write_context_vectors() must be run first).
+        """
+        if not self.load_index():
+            raise FileNotFoundError(
+                f"No persisted FAISS index found at {self.index_path}. "
+                "Run write_context_vectors() at least once to build it."
+            )
+        print(f"[DEBUG] Loaded existing FAISS index from '{self.index_path}' with {self.index.ntotal} vectors")
+        return True

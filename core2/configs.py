@@ -102,11 +102,14 @@ class Configs:
     DEFAULT_CONTEXT_CHROMODB_NAME = "relevance_knowledge"
     DEFAULT_CONTEXT_FAISS_NAME = "context.index"
     DEFAULT_EMBEDDING_MODEL_NAME = "sentence_transformer" # availabe at embeddings.py
-    DEFAULT_LLM_MODEL_NAME = "google"  # available at llms.py
+    DEFAULT_LLM_MODEL_NAME = "claude"  # available at llms.py
     DEFAULT_LLM_HUGGING_FACE_MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"  # available at llms.py
     DEFAULT_LLM_GOOGLE_MODEL_NAME = "gemini-3.5-flash"  # lowest-cost Gemini Flash tier
+    DEFAULT_LLM_CLAUDE_MODEL_NAME = "claude-sonnet-4-5"  # available at llms.py (Anthropic)
     DEFAULT_GEMINI_TEMPERATURE = 0.7
     DEFAULT_GEMINI_MAX_TOKENS = 1000
+    DEFAULT_LLM_CLAUDE_TEMPERATURE = 0.7
+    DEFAULT_LLM_CLAUDE_MAX_TOKENS = 1000
     DEFAULT_ITEM_EMBEDDING_DIMENSION = 384
     DEFAULT_USER_EMBEDDING_DIMENSION = 384
     DEFAULT_USER_ITEM_EMBEDDING_DIMENSION = 384
@@ -147,6 +150,9 @@ class Configs:
             "users_parquet_folder",
             "items_parquet_folder",
             "llm_chat",
+            "embedding_model",
+            "llm_platform",
+            "llm_model",
             "user_id",
             "num_items",
             "num_users",
@@ -154,6 +160,28 @@ class Configs:
             "datasets",
         }
     )
+
+    @classmethod
+    def load_env_file(cls) -> None:
+        """Load KEY=VALUE pairs from the repo-root .env into os.environ.
+
+        Values already present in the environment (e.g. exported in the shell,
+        like HF_TOKEN) always win; empty values in .env are skipped. Used for
+        API keys such as CLAUDE_KEY / ANTHROPIC_API_KEY.
+        """
+        env_file = cls.current_dir / ".env"
+        if not env_file.is_file():
+            return
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[len("export "):]
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip().strip("'\"")
+            if key and value:
+                os.environ.setdefault(key, value)
 
     def __init__(self, project_name: str) -> None:
         self.project_name = project_name
@@ -223,6 +251,7 @@ class Configs:
         for key, value in overrides.items():
             if key in cls._YAML_KEYS or key == "datasets":
                 setattr(configs, key, value)
+        configs._setup_embedding_paths()
         configs.created_at = datetime.now(timezone.utc).isoformat()
         configs.save()
         dest.mkdir(parents=True, exist_ok=True)
@@ -284,6 +313,9 @@ class Configs:
         self.users_parquet_folder = None
         self.items_parquet_folder = None
         self.llm_chat = ""
+        self.embedding_model = self.DEFAULT_EMBEDDING_MODEL_NAME
+        self.llm_platform = self.DEFAULT_LLM_MODEL_NAME
+        self.llm_model = ""
         self.num_items = 0
         self.num_users = 0
         self.created_at = None
@@ -392,6 +424,9 @@ class Configs:
             "users_parquet_folder": self.users_parquet_folder,
             "items_parquet_folder": self.items_parquet_folder,
             "llm_chat": self.llm_chat,
+            "embedding_model": self.embedding_model,
+            "llm_platform": self.llm_platform,
+            "llm_model": self.llm_model,
             "user_id": self.user_id,
             "num_items": self.num_items,
             "num_users": self.num_users,
@@ -445,3 +480,8 @@ class Configs:
         if self.prompt_placeholder_sections != llminput.get("prompt_placeholder_sections"):
             pass  # sections come from yaml defaults unless explicitly overridden
         self.save()
+
+
+# Load repo-root .env once at import so every core2 module (llms, embeddings,
+# ...) sees API keys without each caller exporting them in the shell.
+Configs.load_env_file()

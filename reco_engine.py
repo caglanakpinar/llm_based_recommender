@@ -11,8 +11,7 @@ from typing import Any
 
 import pandas as pd
 
-from core.configs import Configs
-from core.rag import LangChainRAG
+from core2.configs import Configs
 from embedding_store import (
     EmbeddingStore,
     collect_user_records,
@@ -89,6 +88,18 @@ def load_engine_meta(name: str) -> dict[str, Any]:
 
 def load_engine_llminput(name: str) -> dict[str, Any]:
     configs = get_engine_configs(name)
+    if not configs.llminput_path.is_file():
+        # Partial build: llminput.json is written mid-build, so a crashed build
+        # leaves only docs/configs.yaml. Rebuild the form values from it.
+        return normalize_llminput(
+            {
+                "top_k": configs.top_k,
+                "constraints": configs.constraints,
+                "llm_chat": configs.llm_chat,
+                "user_profile_columns": configs.user_profile_columns,
+                "item_catalog_columns": configs.item_catalog_columns,
+            }
+        )
     with configs.llminput_path.open(encoding="utf-8") as f:
         return normalize_llminput(json.load(f))
 
@@ -387,6 +398,9 @@ def build_llminput_from_form(
     items_parquet_folder: str,
     llm_chat: str = "",
     target_user_id: str | None = None,
+    embedding_model: str | None = None,
+    llm_platform: str | None = None,
+    llm_model: str | None = None,
 ) -> dict[str, Any]:
     """Assemble llminput from UI fields and separate parquet sources."""
     repo_defaults = Configs.from_engine_name("default")
@@ -427,6 +441,9 @@ def build_llminput_from_form(
         "other_users_interactions": other_ix,
         "item_catalog": item_catalog,
         "llm_chat": llm_chat.strip(),
+        "embedding_model": embedding_model or Configs.DEFAULT_EMBEDDING_MODEL_NAME,
+        "llm_platform": llm_platform or Configs.DEFAULT_LLM_MODEL_NAME,
+        "llm_model": llm_model or "",
     }
 
 
@@ -514,6 +531,11 @@ def build_engine(
         top_k=llminput.get("top_k", 3),
         constraints=llminput.get("constraints", ""),
         llm_chat=llminput.get("llm_chat", ""),
+        embedding_model=llminput.get(
+            "embedding_model", Configs.DEFAULT_EMBEDDING_MODEL_NAME
+        ),
+        llm_platform=llminput.get("llm_platform", Configs.DEFAULT_LLM_MODEL_NAME),
+        llm_model=llminput.get("llm_model", ""),
         user_profile_columns=llminput.get(
             "user_profile_columns", Configs.DEFAULT_USER_PROFILE_COLUMNS
         ),
@@ -564,62 +586,4 @@ def default_item_catalog_json() -> str:
 
 def default_user_profile_json() -> str:
     return json.dumps(load_default_user_profile(), indent=2, ensure_ascii=False)
-
-
-class RAGRecommender(LangChainRAG):
-    """
-    Recommender engine that uses RAG (Retrieval-Augmented Generation) to provide recommendations.
-    Uses embedding vectors from store/embeddings/ to find and rank recommendations
-    without needing an external LLM API.
-    """
-    def __init__(self, model: str = "scratch-model", engine_name: str = "default"):
-        super().__init__(api_key=None, model=model)
-        self.engine_name = engine_name
-        self._embedding_store = None
-        self.prompt_template = self.load_prompt_template()
-
-    def load_prompt_template(self) -> str:
-        configs = Configs.from_engine_name(self.engine_name)
-        return configs.prompt_path_resolved.read_text(encoding="utf-8")
-
-    def generate_llm_prompt(self, result: dict[str, Any], llminput: dict[str, Any] | None = None) -> str:
-        import json
-
-        configs = Configs.from_engine_name(self.engine_name)
-        payload = dict(load_default_llminput(configs))
-        if llminput:
-            payload.update(llminput)
-        payload["llm_chat"] = result_to_text(result)
-
-        template = self.prompt_template
-        skip_keys = frozenset({"user_profile_columns", "item_catalog_columns"})
-        for key, value in payload.items():
-            if key in skip_keys:
-                continue
-            if isinstance(value, (dict, list)):
-                replacement = json.dumps(value, indent=2, ensure_ascii=False)
-            else:
-                replacement = str(value) if value is not None else ""
-            template = template.replace("{" + key + "}", replacement)
-        return template
-    
-    def get_provider(self):
-        """Determine the LLM provider based on available API keys."""
-        hf_token = self.api_key or self.get_hf_token()
-        if hf_token:
-            return "huggingface"
-        return "ollama"
-
-    def _get_llm_caller(self) -> BaseLLM:
-        if self.api_key:
-            return GPTCaller(api_key=self.api_key, model=self.model)
-        return FreeLLMCaller(model=self.model, provider="huggingface") # self.get_provider())
-
-    def call_llm(self, prompt: str) -> str:
-        caller = self._get_llm_caller()
-        return caller.call(prompt)
-
-    @property
-    def embedding_store(self):
-        """Lazy load EmbeddingStore."""
 

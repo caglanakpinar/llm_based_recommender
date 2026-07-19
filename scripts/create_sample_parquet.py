@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -13,9 +14,12 @@ INTERACTIONS_OUT = ROOT / "data" / "sample_interactions"
 USERS_OUT = ROOT / "data" / "sample_users"
 ITEMS_OUT = ROOT / "data" / "sample_items"
 
-NUM_INTERACTIONS = 200_000
-NUM_USERS = 5_000
-NUM_ITEMS = 500
+NUM_USERS = 200
+NUM_ITEMS = 100
+# Interactions are generated per user (see below) so every user has candidates;
+# these bounds give ~3k total interactions across the sample.
+MIN_INTERACTIONS_PER_USER = 8
+MAX_INTERACTIONS_PER_USER = 22
 ROWS_PER_FILE = 50_000
 SEED = 42
 
@@ -26,8 +30,8 @@ ACTION_WEIGHTS = np.array([0.35, 0.25, 0.15, 0.10, 0.10, 0.05])
 
 rng = np.random.default_rng(SEED)
 
-user_ids = [f"user_{i:05d}" for i in range(1, NUM_USERS + 1)]
-item_ids = [f"item_{i:04d}" for i in range(1, NUM_ITEMS + 1)]
+user_ids = [f"user_{i:03d}" for i in range(1, NUM_USERS + 1)]
+item_ids = [f"item_{i:03d}" for i in range(1, NUM_ITEMS + 1)]
 
 user_segments = rng.choice(SEGMENTS, size=NUM_USERS)
 user_notes = [
@@ -47,8 +51,18 @@ item_descriptions = [
     for cat in item_categories
 ]
 
-user_idx = rng.integers(0, NUM_USERS, size=NUM_INTERACTIONS)
-item_idx = rng.integers(0, NUM_ITEMS, size=NUM_INTERACTIONS)
+# Generate interactions per user so every user_id has interactions (and therefore
+# retrieval candidates). Each user gets a random count of distinct items.
+inter_user_ids: list[str] = []
+inter_item_ids: list[str] = []
+for uid in user_ids:
+    n = int(rng.integers(MIN_INTERACTIONS_PER_USER, MAX_INTERACTIONS_PER_USER + 1))
+    n = min(n, NUM_ITEMS)
+    chosen = rng.choice(item_ids, size=n, replace=False)
+    inter_user_ids.extend([uid] * n)
+    inter_item_ids.extend(chosen.tolist())
+
+NUM_INTERACTIONS = len(inter_user_ids)
 actions = rng.choice(ACTIONS, size=NUM_INTERACTIONS, p=ACTION_WEIGHTS)
 
 base_ts = np.datetime64("2026-01-01T00:00:00")
@@ -58,8 +72,8 @@ timestamp_str = pd.to_datetime(timestamps).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 interactions_df = pd.DataFrame(
     {
-        "user_id": [user_ids[i] for i in user_idx],
-        "item_id": [item_ids[i] for i in item_idx],
+        "user_id": inter_user_ids,
+        "item_id": inter_item_ids,
         "action": actions,
         "timestamp": timestamp_str,
     }
@@ -99,6 +113,10 @@ items_df = pd.DataFrame(
 
 
 def _write_chunks(df: pd.DataFrame, out_dir: Path, prefix: str) -> None:
+    # Remove any previously generated files (old chunks, stray one-off parquet)
+    # so the folder only ever holds the current, format-consistent sample.
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     for file_idx, start in enumerate(range(0, len(df), ROWS_PER_FILE)):
         chunk = df.iloc[start : start + ROWS_PER_FILE]
