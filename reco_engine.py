@@ -88,6 +88,18 @@ def load_engine_meta(name: str) -> dict[str, Any]:
 
 def load_engine_llminput(name: str) -> dict[str, Any]:
     configs = get_engine_configs(name)
+    if not configs.llminput_path.is_file():
+        # Partial build: llminput.json is written mid-build, so a crashed build
+        # leaves only docs/configs.yaml. Rebuild the form values from it.
+        return normalize_llminput(
+            {
+                "top_k": configs.top_k,
+                "constraints": configs.constraints,
+                "llm_chat": configs.llm_chat,
+                "user_profile_columns": configs.user_profile_columns,
+                "item_catalog_columns": configs.item_catalog_columns,
+            }
+        )
     with configs.llminput_path.open(encoding="utf-8") as f:
         return normalize_llminput(json.load(f))
 
@@ -386,6 +398,9 @@ def build_llminput_from_form(
     items_parquet_folder: str,
     llm_chat: str = "",
     target_user_id: str | None = None,
+    embedding_model: str | None = None,
+    llm_platform: str | None = None,
+    llm_model: str | None = None,
 ) -> dict[str, Any]:
     """Assemble llminput from UI fields and separate parquet sources."""
     repo_defaults = Configs.from_engine_name("default")
@@ -426,6 +441,9 @@ def build_llminput_from_form(
         "other_users_interactions": other_ix,
         "item_catalog": item_catalog,
         "llm_chat": llm_chat.strip(),
+        "embedding_model": embedding_model or Configs.DEFAULT_EMBEDDING_MODEL_NAME,
+        "llm_platform": llm_platform or Configs.DEFAULT_LLM_MODEL_NAME,
+        "llm_model": llm_model or "",
     }
 
 
@@ -513,6 +531,11 @@ def build_engine(
         top_k=llminput.get("top_k", 3),
         constraints=llminput.get("constraints", ""),
         llm_chat=llminput.get("llm_chat", ""),
+        embedding_model=llminput.get(
+            "embedding_model", Configs.DEFAULT_EMBEDDING_MODEL_NAME
+        ),
+        llm_platform=llminput.get("llm_platform", Configs.DEFAULT_LLM_MODEL_NAME),
+        llm_model=llminput.get("llm_model", ""),
         user_profile_columns=llminput.get(
             "user_profile_columns", Configs.DEFAULT_USER_PROFILE_COLUMNS
         ),
