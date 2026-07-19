@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import threading
 from typing import Any
 
 
@@ -35,17 +34,20 @@ from reco_engine import (
 
 from core2.datasets import DataSets
 from core2.prompting import (
-    RelevanceScorePrompt, 
-    UserPrompt, 
-    ItemPrompt, 
+    RelevanceScorePrompt,
+    UserPrompt,
+    ItemPrompt,
     UserItemPrompt
 )
-from core2.dbs import ContextVectorDB, ContextDB
 from core2.embeddings import EMBEDDER_REGISTRY, describe_embedders
 from core2.llms import FREE_LLM_REGISTRY
-from core2.ranking import LLMRanker
-from core2.retrieval import Retrieval
-from core2.reco_engine import BuildRecoEngine
+from reco_api import (
+    KSERVE_API_PORT,
+    KSERVE_API_URL,
+    assemble_predictor,
+    build_predictor_for_engine,
+    start_api,
+)
 
 st.set_page_config(
     page_title="LLM Recommender",
@@ -55,9 +57,24 @@ st.set_page_config(
 
 
 
-HUGGINGFACE_API_TOKEN = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_TOKEN") or ""
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or ""
-CLAUDE_API_KEY = os.getenv("CLAUDE_KEY") or os.getenv("ANTHROPIC_API_KEY") or ""
+def _resolve_env_key(candidates: tuple[str, ...]) -> tuple[str, str | None]:
+    """Return ``(value, source_env_var)`` for the first candidate env var that is
+    set. ``source_env_var`` is the exact variable name the value came from (so the
+    sidebar can report e.g. GEMINI_API_KEY vs GOOGLE_API_KEY), or ``None`` when
+    none of the candidates are set."""
+    for name in candidates:
+        value = os.getenv(name)
+        if value:
+            return value, name
+    return "", None
+
+
+OPENAI_API_KEY, OPENAI_ENV_SOURCE = _resolve_env_key(("OPENAI_API_KEY",))
+HUGGINGFACE_API_TOKEN, HUGGINGFACE_ENV_SOURCE = _resolve_env_key(
+    ("HF_TOKEN", "HUGGINGFACE_API_TOKEN")
+)
+GOOGLE_API_KEY, GOOGLE_ENV_SOURCE = _resolve_env_key(("GOOGLE_API_KEY", "GEMINI_API_KEY"))
+CLAUDE_API_KEY, CLAUDE_ENV_SOURCE = _resolve_env_key(("CLAUDE_KEY", "ANTHROPIC_API_KEY"))
 
 PLATFORM_DEFAULT_MODELS = {
     "google": Configs.DEFAULT_LLM_GOOGLE_MODEL_NAME,
@@ -349,6 +366,30 @@ def _extract_recommendation_rows(raw: dict[str, Any] | str) -> list[dict[str, An
     return rows
 
 
+def _ensure_predictor(engine_name: str):
+    """Return a cached KServe predictor for ``engine_name``, building one from
+    persisted engine artifacts (docs/configs.yaml) on first access this session."""
+    predictors = st.session_state.setdefault("kserve_predictors", {})
+    if predictors.get(engine_name) is not None:
+        return predictors[engine_name]
+
+    predictor = build_predictor_for_engine(engine_name)
+    predictors[engine_name] = predictor
+    logger.info("KServe predictor ready for engine '%s'", engine_name)
+    return predictor
+
+
+@st.cache_resource(show_spinner=False)
+def _start_kserve_api(port: int = KSERVE_API_PORT) -> dict[str, Any]:
+    """Start the KServe API once per process (st.cache_resource guards it).
+
+    The server itself lives in ``reco_api`` so its FastAPI app is not defined in
+    the module Streamlit runs — otherwise Streamlit's own uvicorn server picks
+    it up and serves it on the Streamlit port.
+    """
+    return start_api(port)
+
+
 def _get_hf_model_for_provider(openai_model: str) -> str:
     """Map OpenAI model names to HuggingFace compatible models."""
     model_map = {
@@ -543,17 +584,24 @@ def _sidebar() -> None:
 
     st.sidebar.divider()
     st.sidebar.subheader("LLM settings")
-    if HUGGINGFACE_API_TOKEN:
-        st.sidebar.success("✓ HuggingFace API token loaded from environment (HF_TOKEN)")
-    if GOOGLE_API_KEY:
-        st.sidebar.success("✓ Google API key loaded from environment (GOOGLE_API_KEY)")
-    if CLAUDE_API_KEY:
-        st.sidebar.success("✓ Claude API key loaded from environment (CLAUDE_KEY)")
+
+    # Re-checked on every rerun: report which provider keys were found in the
+    # environment and the exact variable each one came from.
+    _env_status = [
+        ("OpenAI API key", OPENAI_API_KEY, OPENAI_ENV_SOURCE),
+        ("HuggingFace API token", HUGGINGFACE_API_TOKEN, HUGGINGFACE_ENV_SOURCE),
+        ("Google API key", GOOGLE_API_KEY, GOOGLE_ENV_SOURCE),
+        ("Claude API key", CLAUDE_API_KEY, CLAUDE_ENV_SOURCE),
+    ]
+    for label, value, source in _env_status:
+        if value:
+            st.sidebar.success(f"✓ {label} loaded from environment ({source})")
+
     st.session_state.openai_api_key = st.sidebar.text_input(
         "OpenAI API key",
         type="password",
-        value=st.session_state.get("openai_api_key", ""),
-        help="Leave empty to use HuggingFace instead.",
+        value=st.session_state.get("openai_api_key", OPENAI_API_KEY),
+        help="Leave empty to use HuggingFace instead. Auto-loaded from OPENAI_API_KEY env var.",
     )
     st.session_state.huggingface_api_key = st.sidebar.text_input(
         "HuggingFace API key",
@@ -774,6 +822,9 @@ def _builder_page() -> None:
                 users_parquet_folder=active_users,
                 items_parquet_folder=active_items,
                 llm_chat=llm_chat,
+                embedding_model=embedding_model,
+                llm_platform=llm_platform,
+                llm_model=llm_model_name.strip(),
             )
 
             with st.spinner("Building Recommender Engine"):
@@ -809,48 +860,18 @@ def _builder_page() -> None:
                 context_prompts.generate_rag_retrieval_context()
                 print(f"[DEBUG] Context/Relevance Prompt sample: {str(context_prompts.context['generated_prompt'].iloc[0])[:200]}...")
             
-            with st.spinner("Generating Contextual DB and Vector DB"):
-                try:
-                    context_vector_db = ContextVectorDB(engine_name=engine_name, prompt=context_prompts, embedding_model_name=embedding_model)
-                    context_vector_db.write_context_vectors()
-                except Exception as exc:
-                    st.error(f"Error building Context Vector DB: {exc}")
-
-                try:
-                    context_db2 = ContextDB(engine_name=engine_name, prompt=context_prompts)
-                    context_db2.write_context()
-                except Exception as exc:
-                    st.error(f"Error building Context DB: {exc}")
-
-            with st.spinner("Generating Contextual Retrieval engine"):
-                retrieve = Retrieval(engine_name=engine_name, datasets=datasets, context_prompts=context_prompts, context_vector_db=context_vector_db, context_db=context_db2)
-
-            with st.spinner("Generating Relevance Ranking engine with LLM Response"):
-                ranker = LLMRanker(
-                    engine_name=engine_name,
-                    datasets=datasets,
-                    retrieval=retrieve,
-                    context_prompts=context_prompts,
-                    llm_model_name=llm_platform,
+            with st.spinner("Building DBs, retrieval, ranker, and KServe engine"):
+                predictor = assemble_predictor(
+                    engine_name,
+                    datasets,
+                    context_prompts,
+                    embedding_model_name=embedding_model,
+                    llm_platform=llm_platform,
                     llm_model=llm_model_name.strip() or None,
+                    write=True,
                 )
-
-            with st.spinner("Generating RAG engine with LLM Response"):
-                eng = BuildRecoEngine(engine_name=engine_name, datasets=datasets, retrieval=retrieve, ranker=ranker, context_prompts=context_prompts)
-                # Start KServe engine in a separate thread to avoid blocking Streamlit
-                engine_thread = threading.Thread(
-                    target=eng.reco_engine_serve,
-                    daemon=True,
-                    name=f"kserve-{engine_name}"
-                )
-                engine_thread.start()
-                print(f"[DEBUG] KServe engine thread started for '{engine_name}'")
-                
-                # Cache the predictor in session state for direct access if KServe server unavailable
-                if "kserve_predictors" not in st.session_state:
-                    st.session_state["kserve_predictors"] = {}
-                predictor = eng.initialize_kserve_api()
-                st.session_state["kserve_predictors"][engine_name] = predictor
+                predictors = st.session_state.setdefault("kserve_predictors", {})
+                predictors[engine_name] = predictor
                 print(f"[DEBUG] KServe predictor cached in session state for '{engine_name}'")
 
             st.session_state.selected_engine = engine_name
@@ -898,6 +919,20 @@ def _generator_page() -> None:
         meta.get("interactions_parquet_folder"),
         meta.get("top_k"),
     )
+
+    # Bring the KServe predictor up as soon as the generator opens, rebuilding it
+    # from persisted engine artifacts when it isn't already cached this session.
+    predictors = st.session_state.get("kserve_predictors", {})
+    if predictors.get(engine_name) is not None:
+        st.success(f"✓ KServe engine ready for **{engine_name}**")
+    else:
+        try:
+            with st.spinner(f"Starting KServe engine for '{engine_name}'…"):
+                _ensure_predictor(engine_name)
+            st.success(f"✓ KServe engine ready for **{engine_name}**")
+        except Exception as exc:
+            logger.exception("Failed to start KServe engine for '%s'", engine_name)
+            st.error(f"Failed to start KServe engine: {exc}")
 
     users_folder = meta.get("users_parquet_folder")
     interactions_folder = meta.get("interactions_parquet_folder")
@@ -1003,19 +1038,19 @@ def _generator_page() -> None:
                 try:
                     logger.info("Calling KServe API for engine '%s' with user_id '%s'", engine_name, target_user_id)
                     
-                    # Build API request for KServe predictor
+                    # Build API request for KServe predictor. The engine is
+                    # selected via the request body, so one endpoint serves all.
                     api_request = {
+                        "engine_name": engine_name,
                         "user_id": str(target_user_id),
                         "top_k": int(run_top_k)
                     }
-                    
+
                     # Call the KServe predictor via HTTP API
                     import requests
                     try:
-                        # Try to call the KServe server (default port 8080)
-                        api_url = f"http://localhost:8080/v1/models/{engine_name}:predict"
-                        logger.info(f"Calling KServe endpoint: {api_url}")
-                        response = requests.post(api_url, json=api_request, timeout=30)
+                        logger.info(f"Calling KServe endpoint: {KSERVE_API_URL}")
+                        response = requests.post(KSERVE_API_URL, json=api_request, timeout=120)
                         response.raise_for_status()
                         raw = response.json()
                         logger.info("KServe API call succeeded")
@@ -1083,6 +1118,15 @@ def _generator_page() -> None:
 
 
 def main() -> None:
+    # Bring the KServe API up on startup, but only once at least one engine
+    # exists — nothing to serve otherwise. st.cache_resource keeps it to a
+    # single background server per process across reruns.
+    if list_engines():
+        try:
+            _start_kserve_api()
+        except Exception:
+            logger.exception("Failed to start KServe API server")
+
     _sidebar()
 
     if st.session_state.page == "generator" and list_engines():
