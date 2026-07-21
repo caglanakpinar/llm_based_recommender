@@ -905,6 +905,57 @@ def _builder_page() -> None:
             st.markdown(processed_prompt)
 
 
+def _render_generator_results(current_engine: str) -> None:
+    """Render the last recommendation run from session state.
+
+    Driven by session state rather than the run button, so the recommendations
+    table and its CSV download button persist across the rerun that Streamlit
+    fires when the download button is clicked. Only shows results that belong to
+    the currently selected engine (stale runs from another engine are ignored).
+    """
+    raw = st.session_state.get("last_response")
+    if raw is None or st.session_state.get("last_reco_engine") != current_engine:
+        return
+
+    import pandas as pd
+
+    target_user_id = st.session_state.get("last_reco_user", "user")
+
+    st.subheader("Target user interactions")
+    interactions = st.session_state.get("last_reco_interactions") or []
+    if interactions:
+        st.dataframe(pd.DataFrame(interactions), width="stretch")
+    else:
+        st.info("No interactions found.")
+
+    st.subheader("Recommendations")
+    rows = _extract_recommendation_rows(raw)
+    logger.info("Extracted recommendation rows (count=%s)", len(rows))
+    if rows:
+        df_recs = pd.DataFrame(rows)
+        st.dataframe(df_recs, width="stretch")
+        csv_bytes = df_recs.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Download recommendations (CSV)",
+            data=csv_bytes,
+            file_name=f"recommendations_{current_engine}_{target_user_id}.csv",
+            mime="text/csv",
+            key="download_recs_csv",
+            width="stretch",
+        )
+    else:
+        st.info("No structured recommendation rows found.")
+
+    with st.expander("Recommendations in Markdown", expanded=True):
+        _render_recommendations_markdown(raw)
+
+    with st.expander("Raw model output", expanded=False):
+        if isinstance(raw, dict):
+            st.json(raw)
+        else:
+            st.code(raw)
+
+
 def _generator_page() -> None:
     global rag
     engines = list_engines()
@@ -1093,45 +1144,23 @@ def _generator_page() -> None:
                     st.exception(e)
 
                 if raw is not None:
-                    st.subheader("Recommendations")
-                    try:
-                        # Display user interactions with target user id
-                        st.subheader("Target user interactions")
-                        interactions = run_llminput.get("target_user_interactions") or []
-                        if interactions:
-                            import pandas as pd
-                            df_interactions = pd.DataFrame(interactions)
-                            st.dataframe(df_interactions, width="stretch")
-                        else:
-                            st.info("No interactions found.")
-
-                        # Display recommendations
-                        st.subheader("Recommendations")
-                        rows = _extract_recommendation_rows(raw)
-                        logger.info("Extracted recommendation rows (count=%s)", len(rows))
-                        if rows:
-                            import pandas as pd
-                            with st.expander("Recommendations Table", expanded=True):
-                                st.dataframe(pd.DataFrame(rows), width="stretch")
-                        else:
-                            logger.warning("No structured recommendation rows found")
-                            st.info("No structured recommendation rows found.")
-
-                        with st.expander("Recommendations in Markdown", expanded=True):
-                            _render_recommendations_markdown(raw)
-
-                        with st.expander("Raw model output", expanded=False):
-                            if isinstance(raw, dict):
-                                st.json(raw)
-                            else:
-                                st.code(raw)
-                    except Exception as e:
-                        logger.exception("Recommendation rendering failed")
-                        st.error(f"Recommendations failed: {str(e)}")
+                    # Persist results so the table + CSV download survive the
+                    # rerun Streamlit triggers on a download-button click (the
+                    # run_btn-gated block would otherwise not re-execute).
+                    st.session_state.last_response = raw
+                    st.session_state.last_reco_interactions = (
+                        run_llminput.get("target_user_interactions") or []
+                    )
+                    st.session_state.last_reco_engine = engine_name
+                    st.session_state.last_reco_user = str(target_user_id)
 
         except Exception as exc:
             logger.exception("Generator flow failed")
             st.error(str(exc))
+
+    # Render (persisted) results outside the run-button gate so the CSV download
+    # button keeps working across reruns.
+    _render_generator_results(engine_name)
 
 
 def main() -> None:

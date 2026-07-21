@@ -96,9 +96,25 @@ class LLMRanker(Configs):
 
     @staticmethod
     def _parse_score(score_response) -> float:
+        """Parse a relevance score in [0, 1] from an LLM response.
+
+        Robust to the model echoing identifiers: a reply like ``item_090`` must
+        not be read as ``90.0``. Digits glued to a word/identifier are dropped,
+        then the first standalone number is taken and clamped to [0, 1].
+        """
         if isinstance(score_response, (int, float)):
-            return float(score_response)
-        match = re.search(r"-?\d*\.?\d+", str(score_response))
-        return float(match.group()) if match else 0.0
+            return max(0.0, min(1.0, float(score_response)))
+        text = str(score_response)
+        # Drop identifier-like tokens (item_090, user001, gemini2) so their
+        # trailing digits can't be mistaken for a score.
+        text = re.sub(r"[A-Za-z_]+\d+", " ", text)
+        match = re.search(r"-?\d*\.?\d+", text)
+        if not match:
+            return 0.0
+        try:
+            value = float(match.group())
+        except ValueError:
+            return 0.0
+        return max(0.0, min(1.0, value))
 
 
