@@ -54,3 +54,5 @@ env/
 
 # Poetry
 poetry.lock
+.data/
+.context/

@@ -116,13 +116,33 @@ class BaseChromaDB(Configs):
         ids: Optional[List[str]] = None,
         metadatas: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
-        """Write text documents to the Chroma collection."""
+        """Write text documents to the Chroma collection.
+
+        ChromaDB enforces a hard per-call ceiling on batch size (typically 5461),
+        so large contexts must be upserted in chunks or the call raises
+        ``InternalError: Batch size ... is greater than max batch size``.
+        """
         if not documents:
             return
         collection = self._get_collection()
         docs = [str(d) for d in documents]
         doc_ids = ids or [f"doc_{i}" for i in range(len(docs))]
-        collection.upsert(ids=doc_ids, documents=docs, metadatas=metadatas)
+
+        # Respect the client's reported ceiling when available, with a safety
+        # margin; fall back to a conservative constant on older chromadb builds.
+        try:
+            max_batch = int(self._chroma_client.get_max_batch_size())
+        except Exception:
+            max_batch = 5461
+        batch_size = max(1, min(max_batch - 100, 5000))
+
+        for start in range(0, len(docs), batch_size):
+            end = start + batch_size
+            collection.upsert(
+                ids=doc_ids[start:end],
+                documents=docs[start:end],
+                metadatas=metadatas[start:end] if metadatas else None,
+            )
     
     def read(self, query_texts: List[str], k: int = 10) -> Dict[str, Any]:
         """Read/search text documents from the Chroma collection."""

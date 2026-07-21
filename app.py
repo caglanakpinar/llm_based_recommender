@@ -76,6 +76,13 @@ HUGGINGFACE_API_TOKEN, HUGGINGFACE_ENV_SOURCE = _resolve_env_key(
 GOOGLE_API_KEY, GOOGLE_ENV_SOURCE = _resolve_env_key(("GOOGLE_API_KEY", "GEMINI_API_KEY"))
 CLAUDE_API_KEY, CLAUDE_ENV_SOURCE = _resolve_env_key(("CLAUDE_KEY", "ANTHROPIC_API_KEY"))
 
+# Consistent sample datasets shipped in the repo; used to prefill the builder's
+# folder-path fields for new engines so a default build always uses matching ids.
+_REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+SAMPLE_INTERACTIONS_FOLDER = os.path.join(_REPO_ROOT, "data", "sample_interactions")
+SAMPLE_USERS_FOLDER = os.path.join(_REPO_ROOT, "data", "sample_users")
+SAMPLE_ITEMS_FOLDER = os.path.join(_REPO_ROOT, "data", "sample_items")
+
 PLATFORM_DEFAULT_MODELS = {
     "google": Configs.DEFAULT_LLM_GOOGLE_MODEL_NAME,
     "claude": Configs.DEFAULT_LLM_CLAUDE_MODEL_NAME,
@@ -502,6 +509,7 @@ def _parquet_upload_section(
     session_upload_key: str,
     meta_folder_key: str,
     load_preview,
+    default_folder: str = "",
 ) -> str | None:
     """Render browse/upload/preview for one parquet dataset kind."""
     st.subheader(title)
@@ -517,7 +525,9 @@ def _parquet_upload_section(
 
     folder_path = st.text_input(
         "Or folder path on this machine",
-        value=(meta or {}).get(meta_folder_key) or "",
+        # For a new engine (no saved meta) prefill the consistent sample folder so
+        # the default build uses matching datasets instead of stale uploads.
+        value=(meta or {}).get(meta_folder_key) or default_folder or "",
         help="Alternative to browse upload: path to a folder with .parquet files.",
         key=f"{dataset_kind}_folder_{upload_key}",
     )
@@ -669,6 +679,7 @@ def _builder_page() -> None:
         session_upload_key="interactions_upload_dir",
         meta_folder_key="interactions_parquet_folder",
         load_preview=load_parquet_interactions,
+        default_folder=SAMPLE_INTERACTIONS_FOLDER,
     )
 
     active_users = _parquet_upload_section(
@@ -683,6 +694,7 @@ def _builder_page() -> None:
         session_upload_key="users_upload_dir",
         meta_folder_key="users_parquet_folder",
         load_preview=load_parquet_users,
+        default_folder=SAMPLE_USERS_FOLDER,
     )
 
     active_items = _parquet_upload_section(
@@ -697,6 +709,7 @@ def _builder_page() -> None:
         session_upload_key="items_upload_dir",
         meta_folder_key="items_parquet_folder",
         load_preview=load_parquet_items,
+        default_folder=SAMPLE_ITEMS_FOLDER,
     )
 
     st.subheader("Models")
@@ -1046,11 +1059,15 @@ def _generator_page() -> None:
                         "top_k": int(run_top_k)
                     }
 
-                    # Call the KServe predictor via HTTP API
+                    # Call the KServe predictor via HTTP API. The first call for
+                    # an engine also builds its server-side predictor (embedding +
+                    # store write), so allow generous headroom beyond the parallel
+                    # per-candidate LLM scoring. Override with RECO_API_TIMEOUT.
                     import requests
+                    api_timeout = int(os.getenv("RECO_API_TIMEOUT", "600"))
                     try:
-                        logger.info(f"Calling KServe endpoint: {KSERVE_API_URL}")
-                        response = requests.post(KSERVE_API_URL, json=api_request, timeout=120)
+                        logger.info(f"Calling KServe endpoint: {KSERVE_API_URL} (timeout={api_timeout}s)")
+                        response = requests.post(KSERVE_API_URL, json=api_request, timeout=api_timeout)
                         response.raise_for_status()
                         raw = response.json()
                         logger.info("KServe API call succeeded")

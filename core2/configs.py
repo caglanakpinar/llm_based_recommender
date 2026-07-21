@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 import shutil
 from dataclasses import dataclass, field
@@ -63,6 +64,108 @@ class Configs:
         "top_k",
         "generated_at",
         "llm_chat",
+    )
+
+    # Default llminput values (formerly data/default_llminput.json). item_catalog
+    # and user_profile are supplied by their own default loaders, not here.
+    DEFAULT_TOP_K = 3
+    DEFAULT_CONSTRAINTS = (
+        "- Exclude items already purchased or disliked by the Target User.\n"
+        "- Prefer items in categories the user engaged with recently.\n"
+        "- Balance exploitation with one exploratory item."
+    )
+    DEFAULT_ALLOWED_ACTIONS = (
+        "view, click, add_to_cart, purchase, like, dislike, rate, share, remove"
+    )
+    DEFAULT_ACTION_WEIGHTS = (
+        "| Action | Weight | Meaning |\n"
+        "|--------|--------|----------|\n"
+        "| purchase | 1.0 | Strong positive signal |\n"
+        "| add_to_cart | 0.85 | High intent |\n"
+        "| like | 0.75 | Explicit preference |\n"
+        "| rate | 0.70 | Use rating value |\n"
+        "| click | 0.50 | Interest signal |\n"
+        "| view | 0.30 | Weak signal |\n"
+        "| share | 0.65 | Social endorsement |\n"
+        "| dislike | -1.0 | Hard negative |\n"
+        "| remove | -0.5 | Negative signal |"
+    )
+    DEFAULT_TARGET_USER_INTERACTIONS: tuple[dict[str, str], ...] = (
+        {"timestamp": "2026-06-01T10:15:00Z", "item_id": "item_001", "action": "view"},
+        {"timestamp": "2026-06-01T10:16:30Z", "item_id": "item_001", "action": "click"},
+        {"timestamp": "2026-06-03T09:05:00Z", "item_id": "item_001", "action": "purchase"},
+        {"timestamp": "2026-06-10T18:40:00Z", "item_id": "item_002", "action": "view"},
+        {"timestamp": "2026-06-10T18:41:00Z", "item_id": "item_002", "action": "like"},
+    )
+    DEFAULT_OTHER_USERS_INTERACTIONS: tuple[dict[str, Any], ...] = (
+        {
+            "user_id": "user_002",
+            "segment": "new_customer",
+            "notes": "Browsing electronics and gaming gear.",
+            "interactions": [
+                {"timestamp": "2026-06-05T08:00:00Z", "item_id": "item_001", "action": "purchase"},
+                {"timestamp": "2026-06-06T12:00:00Z", "item_id": "item_004", "action": "purchase"},
+            ],
+        },
+        {
+            "user_id": "user_003",
+            "segment": "returning_customer",
+            "notes": "Prefers books and programming content.",
+            "interactions": [
+                {"timestamp": "2026-06-08T10:30:00Z", "item_id": "item_002", "action": "purchase"},
+                {"timestamp": "2026-06-11T09:20:00Z", "item_id": "item_003", "action": "purchase"},
+            ],
+        },
+    )
+
+    # Default item catalog / user profile (formerly data/default_item_catalog.json
+    # and data/default_user_profile.json).
+    DEFAULT_USER_PROFILE: dict[str, str] = {
+        "user_id": "user_001",
+        "segment": "returning_customer",
+        "notes": "Interested in tech gadgets and sci-fi books.",
+    }
+    DEFAULT_ITEM_CATALOG: tuple[dict[str, Any], ...] = (
+        {
+            "item_id": "item_001",
+            "title": "Wireless Bluetooth Earbuds",
+            "category": "electronics",
+            "tags": ["wireless", "audio", "budget"],
+            "price": 29.99,
+            "description": "Compact earbuds with noise isolation and 24-hour battery case.",
+        },
+        {
+            "item_id": "item_002",
+            "title": "The Martian",
+            "category": "books",
+            "tags": ["fiction", "sci-fi", "bestseller"],
+            "price": 14.99,
+            "description": "A stranded astronaut fights to survive on Mars.",
+        },
+        {
+            "item_id": "item_003",
+            "title": "Python for Data Analysis",
+            "category": "books",
+            "tags": ["non-fiction", "programming", "data"],
+            "price": 39.99,
+            "description": "Practical guide to pandas, NumPy, and data workflows.",
+        },
+        {
+            "item_id": "item_004",
+            "title": "Mechanical Keyboard",
+            "category": "electronics",
+            "tags": ["gaming", "peripherals", "mechanical"],
+            "price": 89.99,
+            "description": "Hot-swappable switches with RGB backlighting.",
+        },
+        {
+            "item_id": "item_005",
+            "title": "Travel Guide: Amsterdam",
+            "category": "travel",
+            "tags": ["europe", "city-guide", "canals"],
+            "price": 19.99,
+            "description": "Neighborhoods, museums, and day trips around Amsterdam.",
+        },
     )
 
     DEFAULT_USER_PROFILE_COLUMNS: dict[str, str] = {
@@ -302,12 +405,8 @@ class Configs:
         self.default_llminput_keys = list(self.DEFAULT_LLMINPUT_KEYS)
         self.user_profile_columns = dict(self.DEFAULT_USER_PROFILE_COLUMNS)
         self.item_catalog_columns = dict(self.DEFAULT_ITEM_CATALOG_COLUMNS)
-        self.top_k = 3
-        self.constraints = (
-            "- Exclude items already purchased or disliked by the Target User.\n"
-            "- Prefer items in categories the user engaged with recently.\n"
-            "- Balance exploitation with one exploratory item."
-        )
+        self.top_k = self.DEFAULT_TOP_K
+        self.constraints = self.DEFAULT_CONSTRAINTS
         self.parquet_folder = None
         self.interactions_parquet_folder = None
         self.users_parquet_folder = None
@@ -453,6 +552,35 @@ class Configs:
                 sort_keys=False,
                 allow_unicode=True,
             )
+
+    def default_item_catalog(self) -> list[dict[str, Any]]:
+        """Default item catalog (replaces data/default_item_catalog.json)."""
+        return copy.deepcopy([dict(x) for x in self.DEFAULT_ITEM_CATALOG])
+
+    def default_user_profile(self) -> dict[str, Any]:
+        """Default user profile (replaces data/default_user_profile.json)."""
+        return copy.deepcopy(dict(self.DEFAULT_USER_PROFILE))
+
+    def default_llminput(self) -> dict[str, Any]:
+        """Base default llminput built from Configs (replaces the former
+        data/default_llminput.json). Callers add ``item_catalog`` and
+        ``user_profile`` from their own default loaders."""
+        return {
+            "top_k": self.top_k,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "allowed_actions": self.DEFAULT_ALLOWED_ACTIONS,
+            "action_weights": self.DEFAULT_ACTION_WEIGHTS,
+            "constraints": self.constraints,
+            "user_profile_columns": dict(self.user_profile_columns),
+            "item_catalog_columns": dict(self.item_catalog_columns),
+            "llm_chat": self.llm_chat,
+            "target_user_interactions": copy.deepcopy(
+                [dict(x) for x in self.DEFAULT_TARGET_USER_INTERACTIONS]
+            ),
+            "other_users_interactions": copy.deepcopy(
+                [dict(x) for x in self.DEFAULT_OTHER_USERS_INTERACTIONS]
+            ),
+        }
 
     def update_from_build(
         self,

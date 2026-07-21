@@ -530,16 +530,12 @@ def build_default_prompt_records(
 
 def load_default_item_catalog(configs: Configs | None = None) -> list[dict[str, Any]]:
     cfg = configs or Configs.from_engine_name("default")
-    path = cfg.data_path / "default_item_catalog.json"
-    with path.open(encoding="utf-8") as f:
-        return json.load(f)
+    return cfg.default_item_catalog()
 
 
 def load_default_user_profile(configs: Configs | None = None) -> dict[str, Any]:
     cfg = configs or Configs.from_engine_name("default")
-    path = cfg.data_path / "default_user_profile.json"
-    with path.open(encoding="utf-8") as f:
-        return json.load(f)
+    return cfg.default_user_profile()
 
 
 def load_default_target_user_profile(configs: Configs | None = None) -> dict[str, Any]:
@@ -549,16 +545,18 @@ def load_default_target_user_profile(configs: Configs | None = None) -> dict[str
 
 def load_default_user_profiles(configs: Configs | None = None) -> list[dict[str, Any]]:
     cfg = configs or Configs.from_engine_name("default")
-    path = cfg.data_path / "default_user_profiles.json"
-    with path.open(encoding="utf-8") as f:
-        return json.load(f)
+    # The target profile plus the peers referenced in default other-user interactions.
+    profiles = [cfg.default_user_profile()]
+    for peer in cfg.DEFAULT_OTHER_USERS_INTERACTIONS:
+        profiles.append({k: v for k, v in peer.items() if k != "interactions"})
+    return profiles
 
 
 def load_default_llminput(configs: Configs | None = None) -> dict[str, Any]:
     cfg = configs or Configs.from_engine_name("default")
-    path = cfg.data_path / "default_llminput.json"
-    with path.open(encoding="utf-8") as f:
-        llminput = json.load(f)
+    # Defaults now live in Configs (no data/default_llminput.json dependency);
+    # item_catalog and user_profile still come from their own default loaders.
+    llminput = cfg.default_llminput()
     llminput["item_catalog"] = load_default_item_catalog(cfg)
     llminput["user_profile"] = load_default_user_profile(cfg)
     return llminput

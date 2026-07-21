@@ -1,10 +1,18 @@
 from typing import Dict, List, Any
 import json
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 from kserve import Model, ModelServer
 from core2.configs import Configs
 from core2.logger import logger
 from core2.ranking import BaseRelevanceRanking, LLMRanker
+
+# Per-candidate relevance scoring makes one LLM call each; those calls are
+# network-bound, so scoring candidates concurrently avoids the request timing
+# out on users with many candidates. Override with RECO_SCORING_WORKERS.
+MAX_SCORING_WORKERS = max(1, int(os.getenv("RECO_SCORING_WORKERS", "8")))
 
 
 def _mask_key(value: Any) -> str:
@@ -103,18 +111,19 @@ class RecoEnginePredictor(Model):
             )
             return {"recommendations": [], "user_id": user_id}
 
-        # 2. Score each candidate with ranking model
-        scored_items = []
-        for idx, candidate in enumerate(candidates):
-            item_id = candidate.get("item_id")
-            if not item_id:
-                logger.warning(
-                    "[predictor:%s] step 2 skip candidate #%s with no item_id: %s",
-                    self.name, idx, candidate,
-                )
-                continue
+        # 2. Score each candidate with the ranking model. Each score is an
+        # independent, network-bound LLM call, so run them concurrently to keep
+        # the total well under the client request timeout.
+        valid_candidates = [c for c in candidates if c.get("item_id")]
+        skipped = len(candidates) - len(valid_candidates)
+        if skipped:
+            logger.warning(
+                "[predictor:%s] step 2 skipped %d candidate(s) with no item_id",
+                self.name, skipped,
+            )
 
-            # Generate relevance score for user-item pair (this is the LLM call)
+        def _score_candidate(candidate: Dict[str, Any]) -> Dict[str, Any] | None:
+            item_id = candidate.get("item_id")
             try:
                 score_result = self.ranker.generate_scores(user_id, item_id)
             except Exception as exc:
@@ -122,20 +131,28 @@ class RecoEnginePredictor(Model):
                     "[predictor:%s] step 2 scoring FAILED | user_id=%s | item_id=%s | error=%s",
                     self.name, user_id, item_id, exc,
                 )
-                continue
+                return None
             score = score_result.get("relevance_score", 0.0) if isinstance(score_result, dict) else 0.0
-            logger.info(
-                "[predictor:%s] step 2 scored | item_id=%s | score=%s | (%s/%s)",
-                self.name, item_id, score, idx + 1, len(candidates),
-            )
-
-            scored_items.append({
+            logger.info("[predictor:%s] step 2 scored | item_id=%s | score=%s", self.name, item_id, score)
+            return {
                 "item_id": item_id,
                 "title": candidate.get("title", ""),
                 "category": candidate.get("category", ""),
                 "score": float(score),
-                "signals": candidate.get("signals", [])
-            })
+                "signals": candidate.get("signals", []),
+            }
+
+        workers = max(1, min(MAX_SCORING_WORKERS, len(valid_candidates)))
+        t0 = time.perf_counter()
+        scored_items = []
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for result in pool.map(_score_candidate, valid_candidates):
+                if result is not None:
+                    scored_items.append(result)
+        logger.info(
+            "[predictor:%s] step 2 scored %d/%d candidates in %.1fs (workers=%d)",
+            self.name, len(scored_items), len(valid_candidates), time.perf_counter() - t0, workers,
+        )
 
         # 3. Sort by score and return top_k
         ranked = sorted(scored_items, key=lambda x: x["score"], reverse=True)[:top_k]

@@ -12,6 +12,7 @@ from typing import Any
 import pandas as pd
 
 from core2.configs import Configs
+from core2.logger import logger
 from embedding_store import (
     EmbeddingStore,
     collect_user_records,
@@ -263,7 +264,9 @@ def load_parquet_items(folder_path: str) -> pd.DataFrame:
 
 
 def list_parquet_user_ids(users_folder_path: str) -> list[str]:
+    logger.info("[list_parquet_user_ids] users_folder_path=%s", users_folder_path)
     df = load_parquet_users(users_folder_path)
+    logger.info("[list_parquet_user_ids] loaded %d user records", len(df))
     uid_col = "user_id"
     if uid_col not in df.columns:
         raise ValueError(f"User parquet missing required column: {uid_col}")
@@ -455,13 +458,25 @@ def llminput_for_target_user(
     users_parquet_folder: str,
 ) -> dict[str, Any]:
     """Rebuild user-specific llminput fields for a chosen target user at runtime."""
+    target_user_id = str(target_user_id)
+    logger.info(
+        "[fill_target_user] filling target user_id=%s | users_folder=%s | interactions_folder=%s",
+        target_user_id, users_parquet_folder, interactions_parquet_folder,
+    )
     users_df = load_parquet_users(users_parquet_folder)
     user_profile_columns = base_llminput.get(
         "user_profile_columns", Configs.DEFAULT_USER_PROFILE_COLUMNS
     )
     profiles = extract_user_profiles(users_df, user_profile_columns)
-    target_user_id = str(target_user_id)
+    logger.info(
+        "[fill_target_user] loaded %d user profiles (user_id column=%s)",
+        len(profiles), user_profile_columns.get("user_id"),
+    )
     if target_user_id not in profiles:
+        logger.error(
+            "[fill_target_user] target user_id=%s NOT found among %d profiles (sample=%s)",
+            target_user_id, len(profiles), list(profiles.keys())[:10],
+        )
         raise ValueError(
             f"Target user '{target_user_id}' not found in user parquet "
             f"(column {user_profile_columns['user_id']})."
@@ -477,6 +492,10 @@ def llminput_for_target_user(
     merged["generated_at"] = datetime.now(timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
+    logger.info(
+        "[fill_target_user] filled target user_id=%s | profile=%s | target_interactions=%d | peer_users=%d",
+        target_user_id, profiles[target_user_id], len(target_ix), len(other_ix),
+    )
     return merged
 
 
@@ -485,8 +504,10 @@ def copy_parquet_datasets_to_engine(
     interactions_parquet_folder: str,
     users_parquet_folder: str,
     items_parquet_folder: str,
-) -> None:
-    """Copy parquet dataset files from source folders to engine's data folder."""
+) -> dict[str, str]:
+    """Copy parquet dataset files from source folders into the engine's own data
+    folder and return the engine-local destination folders (so configs.yaml can
+    point at the engine's copy rather than the shared upload staging folder)."""
     data_dir = engine_root / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -495,11 +516,12 @@ def copy_parquet_datasets_to_engine(
     users_dest = data_dir / "users"
     items_dest = data_dir / "items"
 
-    for dest_dir in [interactions_dest, users_dest, items_dest]:
-        dest_dir.mkdir(parents=True, exist_ok=True)
-
-    # Copy parquet files from source folders
+    # Copy parquet files from source folders, replacing any prior copy so a
+    # rebuild never leaves stale files behind.
     def copy_parquet_files(src_folder: str, dest_folder: Path) -> None:
+        if dest_folder.exists():
+            shutil.rmtree(dest_folder)
+        dest_folder.mkdir(parents=True, exist_ok=True)
         src_path = Path(src_folder)
         if src_path.exists() and src_path.is_dir():
             for parquet_file in src_path.glob("*.parquet"):
@@ -512,6 +534,47 @@ def copy_parquet_datasets_to_engine(
     copy_parquet_files(items_parquet_folder, items_dest)
 
     print(f"✓ Parquet datasets copied to {data_dir.relative_to(engine_root)}/")
+    return {
+        "interactions": str(interactions_dest.resolve()),
+        "users": str(users_dest.resolve()),
+        "items": str(items_dest.resolve()),
+    }
+
+
+def _validate_dataset_id_overlap(
+    *,
+    interactions_parquet_folder: str,
+    profile_user_ids: set[str],
+    catalog_item_ids: set[str],
+) -> None:
+    """Raise if interaction ids don't overlap the user/item catalogs.
+
+    A zero overlap means the datasets use different id formats or scopes (e.g.
+    interactions ``user_001`` vs users ``user_00001``), which yields an engine
+    that can never retrieve candidates. Surface it at build time.
+    """
+    interactions = load_parquet_interactions(interactions_parquet_folder)
+    inter_users = set(interactions["user_id"].astype(str))
+    inter_items = set(interactions["item_id"].astype(str))
+
+    if inter_users and profile_user_ids and not (inter_users & profile_user_ids):
+        raise ValueError(
+            "Interaction user_ids do not match the user profile catalog (0 overlap). "
+            f"Interactions e.g. {sorted(inter_users)[:3]}; users e.g. {sorted(profile_user_ids)[:3]}. "
+            "Upload interaction and user datasets that share the same user_id format."
+        )
+    if inter_items and catalog_item_ids and not (inter_items & catalog_item_ids):
+        raise ValueError(
+            "Interaction item_ids do not match the item catalog (0 overlap). "
+            f"Interactions e.g. {sorted(inter_items)[:3]}; items e.g. {sorted(catalog_item_ids)[:3]}. "
+            "Upload interaction and item datasets that share the same item_id format."
+        )
+    logger.info(
+        "[build_engine] dataset id overlap OK | interaction_users=%d matched_users=%d "
+        "interaction_items=%d matched_items=%d",
+        len(inter_users), len(inter_users & profile_user_ids),
+        len(inter_items), len(inter_items & catalog_item_ids),
+    )
 
 
 def build_engine(
@@ -548,19 +611,34 @@ def build_engine(
         user_id=profile.get("user_id"),
     )
 
-    # Copy parquet datasets to engine's data folder
-    copy_parquet_datasets_to_engine(
+    # Copy parquet datasets into the engine's own data folder and use those
+    # engine-local copies from here on (reads + persisted config), so the engine
+    # is self-contained and no longer depends on the shared upload staging path.
+    engine_folders = copy_parquet_datasets_to_engine(
         configs.engine_root,
         interactions_parquet_folder,
         users_parquet_folder,
         items_parquet_folder,
     )
+    interactions_parquet_folder = engine_folders["interactions"]
+    users_parquet_folder = engine_folders["users"]
+    items_parquet_folder = engine_folders["items"]
 
     items = llminput["item_catalog"]
     users_df = load_parquet_users(users_parquet_folder)
     profiles = extract_user_profiles(
         users_df, llminput.get("user_profile_columns", Configs.DEFAULT_USER_PROFILE_COLUMNS)
     )
+
+    # Fail fast if the datasets don't line up: interactions whose user_id/item_id
+    # never appear in the user/item catalogs produce an engine that retrieves
+    # nothing. Catch it here with a clear message instead of a silent count=0.
+    _validate_dataset_id_overlap(
+        interactions_parquet_folder=interactions_parquet_folder,
+        profile_user_ids=set(profiles.keys()),
+        catalog_item_ids={str(it.get("item_id")) for it in items},
+    )
+
     all_user_records = collect_all_user_records(profiles, interactions_parquet_folder)
 
     rendered = render_prompt(llminput, configs)
@@ -571,9 +649,9 @@ def build_engine(
 
     configs.num_items = len(items)
     configs.num_users = len(all_user_records)
-    configs.interactions_parquet_folder = str(Path(interactions_parquet_folder).resolve())
-    configs.users_parquet_folder = str(Path(users_parquet_folder).resolve())
-    configs.items_parquet_folder = str(Path(items_parquet_folder).resolve())
+    configs.interactions_parquet_folder = interactions_parquet_folder
+    configs.users_parquet_folder = users_parquet_folder
+    configs.items_parquet_folder = items_parquet_folder
     configs.save()
 
 def get_engine_store(name: str) -> EmbeddingStore:
