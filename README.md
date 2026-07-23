@@ -106,16 +106,28 @@ Selected via `create_llm(provider, engine_name)` through the `FREE_LLM_REGISTRY`
 
 | Registry key | Class | Backend | API key |
 |---|---|---|---|
-| `google` (default) | `GoogleGeminiLLM` | `gemini-1.5-flash` via the `google-genai` SDK | `GOOGLE_API_KEY` or `GEMINI_API_KEY` |
+| `claude` / `anthropic` (default) | `ClaudeLLM` | `claude-sonnet-4-5` via the `anthropic` SDK | `CLAUDE_KEY` or `ANTHROPIC_API_KEY` |
+| `google` | `GoogleGeminiLLM` | `gemini-3.5-flash` via the `google-genai` SDK | `GOOGLE_API_KEY` or `GEMINI_API_KEY` |
 | `huggingface` | `HuggingFaceInferenceLLM` | `meta-llama/Llama-3.2-1B-Instruct` via HF Inference API (pinned to the `featherless-ai` provider) | `HF_TOKEN` or `HUGGINGFACE_API_TOKEN` |
 | `ollama` | `OllamaLLM` | any locally-running Ollama model (default `llama3.1:8b`) over HTTP | none |
 | `transformers_local` | `TransformersLocalLLM` | any local HF `text-generation` pipeline (default `distilgpt2`) | none |
 | `gpt2_local`, `distilgpt2_local`, `gpt2_medium_local`, `gpt2_large_local`, `gpt2_xl_local`, `tiny_gpt2_local`, `tinystories_33m_local`, `tinystories_1m_local`, `smollm_135m_local`, `qwen25_05b_local` | `GPT2CausalLocalLLM` presets | local `AutoModelForCausalLM` checkpoints, CPU/GPU auto-detected | none |
 
+The default provider is `Configs.DEFAULT_LLM_MODEL_NAME` (`claude`); pass a
+registry key to `create_llm(provider, engine_name)` to pick another.
+
 `LLMRanker` calls whichever provider is configured with the assembled RAG prompt and
 parses the first float out of the response as the relevance score (`_parse_score`).
 Because every provider implements the same two-method contract, adding a new LLM is
 just a new `BaseLLM` subclass plus a registry entry.
+
+> **Thinking models and token budgets** — Gemini 3.x spends reasoning tokens from
+> the same `max_output_tokens` budget as the answer, so a short-answer call
+> (like the ranker's "reply with a score") can return an **empty string** that
+> `_parse_score` turns into `0.0`. `GoogleGeminiLLM` therefore defaults to
+> `thinking_budget=0` (`Configs.DEFAULT_GEMINI_THINKING_BUDGET`) and logs a
+> warning whenever a reply comes back empty. Pass `thinking_budget=None` to let
+> the model think, and give it ≥256 output tokens if you do.
 
 ## Package layout (`core2/`)
 
@@ -124,7 +136,7 @@ just a new `BaseLLM` subclass plus a registry entry.
 | `configs.py` | `Configs` — per-engine settings persisted to `<engine>/docs/configs.yaml`; default paths, model names, HF cache setup. |
 | `datasets.py` | `DataSets` — loads item/user/interaction parquet (with sample-data fallback) into DataFrames. |
 | `features.py` | Pandas feature functions (`item_features`, `user_features`, `user_item_pair_features`) and the `relevance_score(...)` label used for prompting. |
-| `prompting.py` | `BasePrompt`/`UserPrompt`/`ItemPrompt`/`UserItemPrompt`/`RelevanceScorePrompt` — render `.md` templates into per-row text prompts and build the RAG context corpus. |
+| `prompting.py` | `BasePrompt`/`UserPrompt`/`ItemPrompt`/`UserItemPrompt`/`RelevanceScorePrompt` — render `.md` templates into per-row text prompts and build the RAG context corpus. Each stage caches to `<engine_root>/cache/*.parquet` — see the caching note below. |
 | `embeddings.py` | Embedder registry — see [Embeddings](#embeddings-core2embeddingspy) above. |
 | `dbs.py` | `ContextVectorDB` (FAISS) and `ContextDB` (Chroma) — see [Vector storage & retrieval](#vector-storage--retrieval-core2dbspy-core2retrievalpy) above. |
 | `retrieval.py` | `Retrieval` — candidate generation and RAG context lookups — see above. |
@@ -133,6 +145,13 @@ just a new `BaseLLM` subclass plus a registry entry.
 | `reco_engine.py` | `RecoEnginePredictor` (a `kserve.Model` implementing `predict()`) and `BuildRecoEngine` — wires datasets/retrieval/ranker together and serves predictions. |
 | `logger.py` | Shared module logger. |
 | `item.md`, `user.md`, `user_item_pair.md`, `relevance_score_generator.md` | Prompt template fragments consumed by `prompting.py`. |
+
+> **Prompt cache is keyed by engine name only.** `build_*_feature_dataset()` and
+> `generate_rag_retrieval_context()` persist to `<engine_root>/cache/*.parquet` and
+> reload them whenever the file exists — regardless of whether the underlying data
+> changed. Rebuilding an engine **under the same name with different data** will
+> silently reuse the old prompts and RAG context. Delete `<engine_root>/cache/` or
+> pass `use_cache=False` when the data changes (the benchmark always does).
 
 ## UI
 
@@ -158,7 +177,8 @@ poetry install
 
 | Variable | Used for | Required? |
 |---|---|---|
-| `GOOGLE_API_KEY` or `GEMINI_API_KEY` | `GoogleGeminiLLM` (`gemini-1.5-flash`) — the **default** LLM provider | Yes, unless you switch providers |
+| `CLAUDE_KEY` or `ANTHROPIC_API_KEY` | `ClaudeLLM` (`claude-sonnet-4-5`) — the **default** LLM provider | Yes, unless you switch providers |
+| `GOOGLE_API_KEY` or `GEMINI_API_KEY` | `GoogleGeminiLLM` (`gemini-3.5-flash`) — the provider the benchmark defaults to | Only if using the `google` provider |
 | `HF_TOKEN` / `HUGGINGFACE_API_TOKEN` | Hugging Face model downloads (embeddings) and `HuggingFaceInferenceLLM` | Only if using HF-hosted inference or gated models |
 
 Local providers (`ollama`, local GPT-2/TinyStories/SmolLM/Qwen models) need no API key
@@ -200,7 +220,7 @@ context_db = ContextDB(engine_name, dimension=384, prompt=context_prompts)
 context_db.write_context()
 
 retrieval = Retrieval(engine_name, datasets, context_prompts, context_vector_db, context_db)
-ranker = LLMRanker(engine_name, datasets, retrieval, context_prompts)  # defaults to Gemini Flash
+ranker = LLMRanker(engine_name, datasets, retrieval, context_prompts)  # defaults to Configs.DEFAULT_LLM_MODEL_NAME
 eng = BuildRecoEngine(engine_name, datasets, retrieval, ranker, context_prompts)
 
 predictor = eng.initialize_kserve_api()
@@ -216,37 +236,67 @@ An offline ranking benchmark lives under [`benchmark/`](benchmark/) — see its
 **same** candidate pool per user (relevant items + 20 sampled negatives), scored
 with NDCG / MAP / MRR / Precision / Recall / HitRate `@k`.
 
-### Results (2026-07-17 run)
+### Results (2026-07-22 run)
 
-Setup: 100 sampled users, candidate pool of 2,380 pairs (380 positives), baselines
-fit on the full-population training split (140K interactions), `seed=42`.
+Setup: 100 sampled users, candidate pool of 2,179 pairs (179 positives), `seed=42`.
+Baselines fit on the full-population training split (2,105 interactions). The LLM
+engine (`core2` with `gemini-3.1-flash-lite`, `sentence_transformer` embedder,
+temp 0.2) was run head-to-head on the **first 10** sampled users (221 candidate
+pairs, one LLM call each) — see [why](#llm-runs-on-a-subset) below.
+
+**Head-to-head (same 10 users, identical 221-pair candidate pool):**
 
 | Engine | NDCG@10 | MAP@10 | MRR |
 |---|---|---|---|
-| Item-KNN CF | **0.2781** | **0.1512** | **0.3190** |
-| Random | 0.2710 | 0.1440 | 0.3177 |
-| Popularity | 0.2444 | 0.1292 | 0.3092 |
-| LLM engine (`core2`) | *pending* | *pending* | *pending* |
+| **LLM engine (`core2`)** | **0.3276** | **0.1762** | **0.2574** |
+| Two-Tower (neural, engineered features) | 0.1449 | 0.0740 | 0.2044 |
+| Item-KNN CF | 0.1279 | 0.0534 | 0.1398 |
 
-- **LLM head-to-head is incomplete**: the scoring run (25 users, 601 pairs via a
-  local Ollama model) was interrupted at 100/601 pairs. Scores are cached in
-  `benchmark/results/llm_score_cache.json`, so re-running resumes where it left off:
+The Two-Tower row comes from the config workflow (`run_config`), which scores the
+*same* shared 10-user pool, so it drops straight into this table. The full
+feature-ranker leaderboard is described below (`gbdt_hist_gbdt` reaches
+NDCG@10 = 0.2947 on the same pool).
+
+**Item-KNN CF over all 100 sampled users (appendix — does the ranking hold at scale?):**
+
+| Engine | NDCG@10 | MAP@10 | MRR |
+|---|---|---|---|
+| Item-KNN CF | 0.2077 | 0.1237 | 0.2225 |
+
+<a name="llm-runs-on-a-subset"></a>
+- **Why the LLM runs on a subset**: the ranker makes one API call per candidate,
+  so all 100 users would be ~2,200 calls — far beyond the Gemini free-tier daily
+  quota (`gemini-3.5-flash` was **20 requests/day** at the time of writing). The
+  head-to-head therefore uses 10 users on the cheaper `gemini-3.1-flash-lite`.
+  Successful scores are cached in `benchmark/results/llm_score_cache.json`, so
+  coverage can be extended across days by re-running:
 
   ```bash
-  poetry run python -m benchmark.run_benchmark --n-users 100 --n-negatives 20
+  export GEMINI_API_KEY=...   # or: set -a; . ./.env; set +a
+  poetry run python -m benchmark.run_benchmark --n-users 100 --n-negatives 20 \
+      --llm-model gemini-3.1-flash-lite --llm-max-users 10 --llm-rpm 12
   ```
 
-- **Interpreting the numbers**: the bundled `data/` is synthetically generated
-  (random interactions), so there is little real collaborative/semantic signal to
-  learn — all engines land near the random floor (Item-KNN edges it out only
-  slightly). This is a property of the sample data, not the harness; point
-  `benchmark/data_prep.py` at real interaction logs (same schema) for a meaningful
-  comparison.
+- **Read these numbers with care.** (1) The bundled `data/` is synthetically
+  generated (~3K random interactions, 200 users, 100 items), so there is little
+  real collaborative/semantic signal — every engine sits near the random floor
+  (a uniform-random ranker scores NDCG@10 ≈ 0.30 on this pool). (2) The LLM is
+  scored on only 10 users, so its lead is *indicative, not significant*. (3)
+  `gemini-3.1-flash-lite` emits weakly
+  discriminative scores here (most cluster near ~0.12), so the ranking is partly
+  noise-driven. Point `benchmark/data_prep.py` at real logs and run the LLM on all
+  users for a meaningful comparison; the harness, splits, and metrics are
+  production-shaped.
 
 A second, config-driven workflow (`benchmark/run_config.py` + `benchmark/leaderboard.py`)
 compares ranker variants — LLM (embedder × provider × temperature), a neural
-two-tower, and GBDT rankers — on the same shared pool; no leaderboard results have
-been generated yet.
+two-tower, and GBDT rankers — on the same shared 10-user pool (feature rankers need
+no API key). Its leaderboard (`benchmark/results/leaderboard.md`):
+
+| Config | NDCG@10 | MAP@10 | MRR |
+|---|---|---|---|
+| `gbdt_hist_gbdt` | 0.2947 | 0.1525 | 0.2210 |
+| `two_tower` | 0.1449 | 0.0740 | 0.2044 |
 
 ## Config files
 

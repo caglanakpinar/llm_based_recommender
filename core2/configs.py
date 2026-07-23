@@ -211,6 +211,12 @@ class Configs:
     DEFAULT_LLM_CLAUDE_MODEL_NAME = "claude-sonnet-4-5"  # available at llms.py (Anthropic)
     DEFAULT_GEMINI_TEMPERATURE = 0.7
     DEFAULT_GEMINI_MAX_TOKENS = 1000
+    # Gemini 3.x models think before answering, and thinking tokens are drawn from
+    # max_output_tokens. A short-answer call (e.g. the ranker's "reply with a score
+    # in [0,1]") can therefore spend its whole budget thinking and return an EMPTY
+    # string. Budget 0 disables thinking so small token budgets stay usable; set to
+    # None to let the model think freely (then give it >= 256 output tokens).
+    DEFAULT_GEMINI_THINKING_BUDGET = 0
     DEFAULT_LLM_CLAUDE_TEMPERATURE = 0.7
     DEFAULT_LLM_CLAUDE_MAX_TOKENS = 1000
     DEFAULT_ITEM_EMBEDDING_DIMENSION = 384

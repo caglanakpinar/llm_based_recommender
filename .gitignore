@@ -56,3 +56,16 @@ env/
 poetry.lock
 .data/
 .context/
+
+# Benchmark / core2 engine build artifacts (written to the repo root at runtime,
+# named after the engine). These are regenerated on every run — never commit them.
+/benchmark_llm/
+/two_tower/
+/gbdt_hist_gbdt/
+/context/
+/context.index
+/datasets/
+# per-config LLM caches + shared dataset are reproducible; keep committed results
+# curated (report.md / metrics.json / leaderboard.md) but ignore the bulky rebuildables
+benchmark/results/shared/
+benchmark/results/configs/

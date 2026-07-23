@@ -3,6 +3,7 @@ import re
 import pandas as pd
 
 from core2.configs import Configs
+from core2.logger import logger
 from core2.datasets import DataSets
 from core2.prompting import RelevanceScorePrompt
 from core2.prompting import UserPrompt
@@ -91,8 +92,14 @@ class LLMRanker(Configs):
             f"Answer:"
         )
         score_response = self.llm_model_name.call(rag_prompt)
-        print(f"User: {user_id}, Item: {item_id}, Score Response: {score_response}")
-        return {"item_id": item_id, "relevance_score": self._parse_score(score_response)}
+        logger.debug("User: %s, Item: %s, Score Response: %s", user_id, item_id, score_response)
+        # `response` is kept so callers can tell "the model said 0" apart from
+        # "the model said nothing and 0.0 is just the parser's fallback".
+        return {
+            "item_id": item_id,
+            "relevance_score": self._parse_score(score_response),
+            "response": score_response,
+        }
 
     @staticmethod
     def _parse_score(score_response) -> float:

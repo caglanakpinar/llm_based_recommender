@@ -15,6 +15,7 @@ from google import genai
 from google.genai import types as genai_types
 
 from core2.configs import Configs
+from core2.logger import logger
 
 
 class BaseLLM(Configs):
@@ -117,7 +118,21 @@ class OllamaLLM(BaseLLM):
 
 
 class GoogleGeminiLLM(BaseLLM):
-	"""Google Gemini caller via the google-genai SDK."""
+	"""Google Gemini caller via the google-genai SDK.
+
+	Thinking models (Gemini 3.x) draw their reasoning tokens from the same
+	``max_output_tokens`` budget as the answer, so a short-answer call can come
+	back EMPTY with ``finish_reason=MAX_TOKENS``. ``thinking_budget`` (default
+	``Configs.DEFAULT_GEMINI_THINKING_BUDGET`` = 0, i.e. no thinking) keeps small
+	budgets usable; pass ``thinking_budget=None`` to let the model think.
+	"""
+
+	def __init__(self, *args: Any, thinking_budget: int | None = -1, **kwargs: Any) -> None:
+		# -1 is the "not specified" sentinel (None means "let the model think").
+		self.thinking_budget = (
+			self.DEFAULT_GEMINI_THINKING_BUDGET if thinking_budget == -1 else thinking_budget
+		)
+		super().__init__(*args, **kwargs)
 
 	def initialize_model(self) -> None:
 		if not self.model or self.model == self.DEFAULT_MODEL_NAME:
@@ -130,16 +145,36 @@ class GoogleGeminiLLM(BaseLLM):
 		self.model = self.model or self.DEFAULT_LLM_GOOGLE_MODEL_NAME
 		self.max_output_tokens = int(self.max_new_tokens) if self.max_new_tokens is not None else int(self.DEFAULT_GEMINI_MAX_TOKENS)
 
+	def _generation_config(self) -> "genai_types.GenerateContentConfig":
+		thinking = (
+			genai_types.ThinkingConfig(thinking_budget=int(self.thinking_budget))
+			if self.thinking_budget is not None
+			else None
+		)
+		return genai_types.GenerateContentConfig(
+			temperature=self.temperature,
+			max_output_tokens=self.max_output_tokens,
+			thinking_config=thinking,
+		)
+
 	def call(self, prompt: str, **kwargs: Any) -> str:
 		response = self._model_client.models.generate_content(
 			model=self.model,
 			contents=str(prompt),
-			config=genai_types.GenerateContentConfig(
-				temperature=self.temperature,
-				max_output_tokens=self.max_output_tokens,
-			),
+			config=self._generation_config(),
 		)
-		return str(response.text or "").strip()
+		text = str(response.text or "").strip()
+		if not text:
+			# Empty text is almost always a truncated thinking model; say so rather
+			# than letting callers silently parse "" into a 0.0 score.
+			finish = response.candidates[0].finish_reason if response.candidates else None
+			logger.warning(
+				"Gemini returned empty text (model=%s, finish_reason=%s, "
+				"max_output_tokens=%s, thinking_budget=%s). Raise max_new_tokens or "
+				"set thinking_budget=0.",
+				self.model, finish, self.max_output_tokens, self.thinking_budget,
+			)
+		return text
 
 
 class ClaudeLLM(BaseLLM):
